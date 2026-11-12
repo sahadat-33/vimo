@@ -36,6 +36,9 @@ export default function StageBrowser({ socket, selfId, roomId, initial, controll
   async function start() { setBusy(true); setErr('');
     const r = await api('/api/hyperbeam/start', { roomId }); setBusy(false);
     if (!r.ok) setErr('Could not start the browser. Check your Hyperbeam key and free minutes.'); }
+  const [txt, setTxt] = useState(''); const tin = useRef<HTMLInputElement>(null);
+  const key = (k: string) => { const h = hb.current; h?.sendEvent?.({ type: 'keydown', key: k }); h?.sendEvent?.({ type: 'keyup', key: k }); };
+  const typeIt = (e: React.FormEvent) => { e.preventDefault(); [...txt].forEach(key); key('Enter'); setTxt(''); };
   async function stop() { await api('/api/hyperbeam/stop', { roomId }); }
 
   if (!info) return <div className="grid h-full place-items-center p-6 text-center">
@@ -44,9 +47,12 @@ export default function StageBrowser({ socket, selfId, roomId, initial, controll
       {err && <p role="alert" className="text-sm text-ember">{err}</p>}</div></div>;
   return <div className="relative h-full w-full">
     <div ref={box} className="h-full w-full" />
+    <form onSubmit={typeIt} className="absolute right-2 top-2 z-20 flex gap-1 sm:hidden">
+      <input ref={tin} value={txt} onChange={(e) => setTxt(e.target.value)} placeholder="Type or paste, then Send" className="w-44 rounded-full bg-black/70 px-3 py-1.5 text-sm" />
+      <button className="rounded-full bg-blush px-3 text-sm font-semibold text-night">Send</button></form>
     <div className="absolute bottom-2 right-2 z-20 flex gap-2">
       <button onClick={() => socket.emit('browser:control', ctl === selfId ? null : selfId)} className="flex items-center gap-1 rounded-full bg-black/70 px-3 py-1.5 text-sm">
         <Hand size={14} /> {ctl === selfId ? 'Pass control' : 'Take control'}</button>
-      <button onClick={stop} className="flex items-center gap-1 rounded-full bg-ember px-3 py-1.5 text-sm font-semibold text-night"><Power size={14} /> Stop browser</button>
+      <button onClick={stop} className="flex items-center gap-1 rounded-full bg-ember px-3 py-1.5 text-sm font-semibold text-night"><Power size={14} /> Stop VM (Save Minutes)</button>
     </div>{err && <p role="alert" className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-ember">{err}</p>}</div>;
 }

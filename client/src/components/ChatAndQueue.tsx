@@ -6,14 +6,19 @@ import type { AppSocket, ChatMessage, QueueItem } from '@/lib/types';
 
 const beep = () => { try { const a = new AudioContext(), o = a.createOscillator(), g = a.createGain();
   o.frequency.value = 880; g.gain.value = 0.05; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.12); } catch {} };
+const REACTIONS = ['❤️', '😂', '😱', '🔥', '😭', '🍿'];
+const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 export default function ChatAndQueue({ socket, selfId, chat, queue, current }: { socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
   const [tab, setTab] = useState<'chat' | 'queue'>('chat');
   const [msgs, setMsgs] = useState(chat), [text, setText] = useState(''), [url, setUrl] = useState(''), [err, setErr] = useState('');
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { const f = (m: ChatMessage) => { setMsgs((x) => [...x, m]); if (m.from !== selfId) beep(); };
+  const [unread, setUnread] = useState(0);
+  const end = useRef<HTMLDivElement>(null); const tabRef = useRef(tab); tabRef.current = tab;
+  useEffect(() => { const f = (m: ChatMessage) => { setMsgs((x) => [...x, m]);
+      if (!m.system && m.from !== selfId) { beep(); if (tabRef.current !== 'chat') setUnread((n) => n + 1); } };
     socket.on('chat:message', f); return () => { socket.off('chat:message', f); }; }, [socket, selfId]);
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [msgs, tab]);
+  useEffect(() => { if (tab === 'chat') setUnread(0); }, [tab]);
 
   async function add(e: React.FormEvent) {
     e.preventDefault(); const id = ytId(url.trim());
@@ -21,15 +26,24 @@ export default function ChatAndQueue({ socket, selfId, chat, queue, current }: {
     let title = id; try { const r = await fetch(`https://www.youtube.com/oembed?url=https://youtu.be/${id}&format=json`); title = (await r.json()).title || id; } catch {}
     socket.emit('queue:add', { id, title, addedBy: selfId }); setUrl('');
   }
-  const tabBtn = (t: 'chat' | 'queue', Icon: typeof ListVideo, label: string) =>
-    <button onClick={() => setTab(t)} aria-pressed={tab === t} className={`flex flex-1 items-center justify-center gap-1 py-2 text-sm font-semibold ${tab === t ? 'border-b-2 border-blush' : 'text-cream/60'}`}><Icon size={16} />{label}</button>;
+  const tabBtn = (t: 'chat' | 'queue', Icon: typeof ListVideo, label: string, badge = 0) =>
+    <button onClick={() => setTab(t)} aria-pressed={tab === t} className={`relative flex flex-1 items-center justify-center gap-1 py-2 text-sm font-semibold ${tab === t ? 'border-b-2 border-blush' : 'text-cream/60'}`}>
+      <Icon size={16} />{label}{badge > 0 && <span className="ml-1 rounded-full bg-ember px-1.5 text-xs text-night">{badge}</span>}</button>;
   const input = 'min-w-0 flex-1 rounded-xl bg-dusk border border-plum px-3 py-2';
 
   return <div className="flex h-full flex-col">
-    <div className="flex">{tabBtn('chat', MessageCircle, 'Chat')}{tabBtn('queue', ListVideo, `Queue (${queue.length})`)}</div>
+    <div className="flex">{tabBtn('chat', MessageCircle, 'Chat', unread)}{tabBtn('queue', ListVideo, `Queue (${queue.length})`)}</div>
     {tab === 'chat' ? <>
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-        {msgs.map((m) => <p key={m.id} className={`max-w-[85%] rounded-2xl px-3 py-1.5 text-sm ${m.from === selfId ? 'ml-auto bg-blush text-night' : 'bg-plum'}`}>{m.text}</p>)}<div ref={end} /></div>
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+        {msgs.map((m) => m.system
+          ? <p key={m.id} className="mx-auto w-fit rounded-full bg-dusk px-3 py-0.5 text-center text-xs text-cream/60">{m.text}</p>
+          : <div key={m.id} className={`flex items-end gap-2 ${m.from === selfId ? 'flex-row-reverse' : ''}`}>
+              <span style={{ background: m.color }} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-lg">{m.avatar}</span>
+              <div className={`max-w-[78%] rounded-2xl px-3 py-1.5 text-sm ${m.from === selfId ? 'bg-blush text-night' : 'bg-plum'}`}>
+                <p className="text-xs opacity-70">{m.name} · {hm(m.at)}</p><p className="break-words">{m.text}</p></div></div>)}
+        <div ref={end} /></div>
+      <div className="flex justify-center gap-1 px-2" aria-label="Reactions">
+        {REACTIONS.map((e) => <button key={e} aria-label={`React ${e}`} onClick={() => socket.emit('reaction', e)} className="rounded-full bg-dusk px-2 py-1 text-xl active:scale-90">{e}</button>)}</div>
       <form onSubmit={(e) => { e.preventDefault(); if (text.trim()) { socket.emit('chat:send', text.trim()); setText(''); } }} className="flex gap-2 p-2">
         <input className={input} value={text} onChange={(e) => setText(e.target.value)} placeholder="Say something" />
         <button aria-label="Send" className="rounded-xl bg-blush p-2 text-night"><Send size={18} /></button></form>

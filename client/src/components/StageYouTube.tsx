@@ -10,7 +10,8 @@ const loadYT = () => new Promise<void>((res) => {
   if (!document.getElementById('yt-api')) { const s = document.createElement('script'); s.id = 'yt-api'; s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s); }
 });
 
-export default function StageYouTube({ playback, current, emitPlayback }: StageProps) {
+export default function StageYouTube({ playback, current, emitPlayback, onEnded }: StageProps & { onEnded?: () => void }) {
+  const endedRef = useRef(onEnded); endedRef.current = onEnded;
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<any>(null);
   const remote = useRef(false);            // isRemoteUpdate mutex
@@ -32,6 +33,7 @@ export default function StageYouTube({ playback, current, emitPlayback }: StageP
         events: {
           onReady: () => withRemote(() => { player.current.seekTo(expected(), true); if (pbRef.current.playing) player.current.playVideo(); }),
           onStateChange: (e: any) => {
+            if (e.data === 0) endedRef.current?.();
             if (remote.current) return;
             if (e.data === 1) emit.current(snapshot(true));
             if (e.data === 2) emit.current(snapshot(false));
