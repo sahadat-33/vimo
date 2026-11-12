@@ -10,6 +10,11 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin } });
 
 /** roomId -> state. Keep in sync with client/src/lib/types.ts */
+const MAX = 10;
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const who = (r, sid) => (r.members.find((m) => m.id === sid) || {}).name || 'Someone';
+const sys = (id, r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
+  r.chat.push(m); io.to(id).emit('chat:message', m); };
 const rooms = new Map();
 const room = (id) => {
   if (!rooms.has(id)) rooms.set(id, { mode: 'youtube', queue: [], current: null,
@@ -17,7 +22,7 @@ const room = (id) => {
   return rooms.get(id);
 };
 const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: r.playback,
-  chat: r.chat.slice(-100), hb: r.hb && { embedUrl: r.hb.embedUrl, adminToken: r.hb.adminToken }, controller: r.controller });
+  chat: r.chat.slice(-100), hb: r.hb && { embedUrl: r.hb.embedUrl, adminToken: r.hb.adminToken }, controller: r.controller, members: r.members });
 
 app.get('/health', (_q, s) => s.json({ ok: true, rooms: rooms.size }));
 app.post('/api/auth', (q, s) => (ok(q.body.passcode) ? s.json({ ok: true }) : s.status(401).json({ ok: false })));
@@ -29,7 +34,7 @@ app.post('/api/daily/:roomId', guard, async (q, s) => {
     if (!r.daily) {
       const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DAILY_API_KEY}` },
-        body: JSON.stringify({ properties: { max_participants: 2, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
+        body: JSON.stringify({ properties: { max_participants: 10, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
       if (!res.ok) throw new Error(await res.text());
       r.daily = (await res.json()).url;
     }
@@ -65,19 +70,22 @@ app.post('/api/hyperbeam/stop', guard, async (q, s) => { await stopHb(q.body.roo
 io.use((sock, next) => (ok(sock.handshake.auth.passcode) ? next() : next(new Error('bad passcode'))));
 io.on('connection', (sock) => {
   let id = null;
-  sock.on('room:join', (roomId, cb) => {
+  sock.on('room:join', (roomId, profile, cb) => {
     const r = room(roomId);
-    if (r.members.length >= 2 && !r.members.includes(sock.id)) return cb({ error: 'Room is full' });
-    id = roomId; sock.join(id); r.members.push(sock.id);
-    cb({ state: pub(r), selfId: sock.id, isHost: r.members[0] === sock.id });
-    sock.to(id).emit('peer:joined', sock.id);
+    if (r.members.length >= MAX && !r.members.some((m) => m.id === sock.id)) return cb({ error: 'Room is full (max 10 people)' });
+    id = roomId; sock.join(id);
+    const me = { id: sock.id, name: String((profile && profile.name) || 'Guest').slice(0, 20),
+      avatar: String((profile && profile.avatar) || '🙂').slice(0, 4), color: String((profile && profile.color) || '#f0a3b5').slice(0, 9) };
+    r.members.push(me);
+    cb({ state: pub(r), selfId: sock.id, isHost: r.members[0].id === sock.id });
+    sock.to(id).emit('peer:joined', me); sys(id, r, `${me.name} joined`);
   });
   const w = (fn) => (...a) => { if (id) fn(room(id), ...a); };
-  sock.on('mode:set', w((r, mode) => { r.mode = mode; r.playback = { playing: false, time: 0, rate: 1 };
+  sock.on('mode:set', w((r, mode) => { r.mode = mode; sys(id, r, `${who(r, sock.id)} switched to ${mode} mode`); r.playback = { playing: false, time: 0, rate: 1 };
     io.to(id).emit('mode:changed', { mode, playback: r.playback }); }));
-  sock.on('playback', w((r, p) => { r.playback = { playing: !!p.playing, time: +p.time || 0, rate: +p.rate || 1 };
+  sock.on('playback', w((r, p) => { if (r.playback.playing !== !!p.playing) sys(id, r, `${who(r, sock.id)} ${p.playing ? 'played' : 'paused'} the video`); r.playback = { playing: !!p.playing, time: +p.time || 0, rate: +p.rate || 1 };
     sock.to(id).emit('playback', { ...r.playback, from: sock.id }); }));
-  sock.on('queue:add', w((r, item) => { r.queue.push(item); if (!r.current) r.current = r.queue.shift();
+  sock.on('queue:add', w((r, item) => { sys(id, r, `${who(r, sock.id)} added “${String(item.title).slice(0, 60)}”`); r.queue.push(item); if (!r.current) r.current = r.queue.shift();
     io.to(id).emit('queue:updated', { queue: r.queue, current: r.current }); }));
   sock.on('queue:remove', w((r, vid) => { r.queue = r.queue.filter((v) => v.id !== vid);
     io.to(id).emit('queue:updated', { queue: r.queue, current: r.current }); }));
@@ -85,12 +93,13 @@ io.on('connection', (sock) => {
     r.playback = { playing: true, time: 0, rate: 1 };
     io.to(id).emit('queue:updated', { queue: r.queue, current: r.current });
     io.to(id).emit('playback', { ...r.playback, from: sock.id }); }));
-  sock.on('chat:send', w((r, text) => { const m = { id: Date.now() + sock.id, from: sock.id, text: String(text).slice(0, 500), at: Date.now() };
+  sock.on('chat:send', w((r, text) => { const me = r.members.find((x) => x.id === sock.id) || {}; const m = { id: uid(), from: sock.id, name: me.name, avatar: me.avatar, color: me.color, text: String(text).slice(0, 500), at: Date.now() };
     r.chat.push(m); io.to(id).emit('chat:message', m); }));
+  sock.on('reaction', w((_r, emoji) => io.to(id).emit('reaction', { id: uid(), emoji: String(emoji).slice(0, 4), from: sock.id })));
   sock.on('file:signal', w((_r, data) => sock.to(id).emit('file:signal', data)));
   sock.on('browser:control', w((r, who) => { r.controller = who; io.to(id).emit('browser:controller', who); }));
   sock.on('disconnect', () => {
-    if (!id) return; const rid = id, r = room(rid); r.members = r.members.filter((m) => m !== sock.id);
+    if (!id) return; const rid = id, r = room(rid); const nm = who(r, sock.id); r.members = r.members.filter((m) => m.id !== sock.id); sys(rid, r, `${nm} left`);
     sock.to(rid).emit('peer:left', sock.id);
     if (!r.members.length) setTimeout(() => { const x = rooms.get(rid); if (x && !x.members.length) { stopHb(rid); rooms.delete(rid); } }, 60000);
   });
