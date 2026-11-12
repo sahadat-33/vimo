@@ -1,0 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap');
+@tailwind base; @tailwind components; @tailwind utilities;
+html, body { height: 100%; background: #17121f; color: #f4ecf0; overscroll-behavior: none; }
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+:focus-visible { outline: 2px solid #f0a3b5; outline-offset: 2px; }
