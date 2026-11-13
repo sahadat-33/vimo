@@ -7,7 +7,13 @@ import { Button, Card, Logo, ModeCard, StatusPill, TextField, cx } from './ui';
 
 type View = 'home' | 'settings' | 'about';
 const NAV: { id: View; label: string; Icon: typeof Home }[] = [{ id: 'home', label: 'Home', Icon: Home }, { id: 'settings', label: 'Settings', Icon: Settings }, { id: 'about', label: 'About', Icon: Info }];
-const rid = () => Math.random().toString(36).slice(2, 8);
+const rid = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(8); crypto.getRandomValues(bytes);
+    return Array.from(bytes, (value) => (value % 36).toString(36)).join('');
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.slice(0, 32);
+};
 
 export default function Dashboard({ onLock }: { onLock: () => void }) {
   const router = useRouter();
@@ -23,7 +29,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     return () => { dead = true; clearInterval(t); };
   }, []);
 
-  const start = (m: Mode) => router.push(`/room/${rid()}?mode=${m}`);
+  const start = (m: Mode) => router.push(`/room/${encodeURIComponent(rid())}?mode=${m}`);
   const join = (e: React.FormEvent) => {
     e.preventDefault();
     const raw = code.trim();
