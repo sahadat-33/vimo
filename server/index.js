@@ -2,7 +2,9 @@ require('dotenv').config();
 const express = require('express'), http = require('http'), cors = require('cors');
 const { Server } = require('socket.io');
 const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
-const ok = (p) => !!ROOM_PASSCODE && p === ROOM_PASSCODE;
+const crypto = require('crypto');
+const sha = (x) => crypto.createHash('sha256').update(x).digest();
+const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE)); // constant-time check
 const origin = process.env.CLIENT_ORIGIN || '*';
 const app = express();
 app.use(cors({ origin })); app.use(express.json());
@@ -24,8 +26,15 @@ const room = (id) => {
 const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: r.playback,
   chat: r.chat.slice(-100), hb: r.hb && { embedUrl: r.hb.embedUrl, adminToken: r.hb.adminToken }, controller: r.controller, members: r.members });
 
-app.get('/health', (_q, s) => s.json({ ok: true, rooms: rooms.size }));
-app.post('/api/auth', (q, s) => (ok(q.body.passcode) ? s.json({ ok: true }) : s.status(401).json({ ok: false })));
+app.get('/health', (_q, s) => s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0) }));
+app.set('trust proxy', 1);
+const tries = new Map(); // ip -> failed-attempt timestamps (10 per 10 min)
+app.post('/api/auth', (q, s) => {
+  const now = Date.now(), t = (tries.get(q.ip) || []).filter((x) => now - x < 600000);
+  if (t.length >= 10) return s.status(429).json({ ok: false, error: 'too_many' });
+  if (ok(q.body && q.body.passcode)) return s.json({ ok: true });
+  t.push(now); tries.set(q.ip, t); s.status(401).json({ ok: false });
+});
 const guard = (q, s, n) => (ok(q.get('x-passcode')) ? n() : s.status(401).json({ error: 'bad passcode' }));
 
 app.post('/api/daily/:roomId', guard, async (q, s) => {
