@@ -57,7 +57,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
 
   return <div className="bg-cinema min-h-[100dvh] lg:flex">
     <aside className="hidden w-64 shrink-0 flex-col gap-8 border-r border-white/5 bg-bg/60 p-6 lg:flex"><Logo />{nav(false)}
-      <p className="mt-auto text-xs text-muted">Your private cinema. Together, anywhere.</p></aside>
+      <p className="mt-auto text-xs text-muted">Better together.</p></aside>
     <header className="flex items-center justify-between gap-3 border-b border-white/5 p-4 lg:hidden"><Logo size={32} text={false} />{nav(true)}</header>
     <main className="mx-auto w-full max-w-5xl flex-1 space-y-8 p-5 md:p-8 lg:p-12">
       {view === 'home' && <>
@@ -76,7 +76,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
           <Button>{saved ? 'Saved' : 'Save nickname'}</Button></form>
           <Button variant="ghost" onClick={() => { sessionStorage.removeItem('passcode'); onLock(); }}><Lock size={18} /> Lock this device</Button></Card></>}
       {view === 'about' && <><h1 className="text-3xl font-bold tracking-tight">About</h1>
-        <Card className="max-w-xl space-y-3 text-muted"><p>CouchCinema is a private watch room for up to 10 people, with live camera and voice built in.</p>
+        <Card className="max-w-xl space-y-3 text-muted"><p>Vimo is a private watch room for up to 10 people, with live camera and voice built in.</p>
           <p>Your passcode is checked on the server and kept only for this browser session. Videos you share are stored in the room’s private storage and removed when the room closes.</p></Card></>}
     </main></div>;
 }

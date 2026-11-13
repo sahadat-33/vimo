@@ -32,7 +32,7 @@ export default function RoomControls(p: RoomControlsProps) {
       <div className="flex shrink-0 overflow-hidden rounded-xl">
         <IconButton label="Chat" active={chatOn} badge={chatOn ? 0 : p.unread} className="!rounded-r-none" onClick={() => p.onToggleTab('chat')}><MessageCircle size={18} /></IconButton>
         <button aria-label="Send a reaction" aria-haspopup="menu" aria-expanded={pop === 'react'} onClick={() => toggle('react')}
-          className={cx('grid w-6 place-items-center border-l border-black/30 transition active:scale-95', pop === 'react' ? 'bg-primary text-white' : chatOn ? 'bg-primary/80 text-white' : 'bg-surface2 text-secondary hover:bg-[#2a2a33]')}><Smile size={15} /></button></div>
+          className={cx('grid w-6 place-items-center border-l border-black/30 transition active:scale-95', pop === 'react' ? 'bg-primary text-white' : chatOn ? 'bg-primary/80 text-white' : 'bg-surface2 text-secondary hover:bg-[#25214a]')}><Smile size={15} /></button></div>
       <IconButton label="Invite" onClick={invite}><UserPlus size={18} /></IconButton>
       <IconButton label="Settings" active={pop === 'settings'} aria-haspopup="dialog" onClick={() => toggle('settings')}><Settings size={18} /></IconButton>
       <IconButton label="Leave room" danger onClick={p.onLeave}><LogOut size={18} /></IconButton></div>

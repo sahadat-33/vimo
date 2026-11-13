@@ -1,14 +1,14 @@
 'use client';
 import { forwardRef, useId, useState } from 'react';
-import { ArrowRight, Clapperboard, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 
 export const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(' ');
 
 export function Logo({ size = 40, text = true }: { size?: number; text?: boolean }) {
-  return <div className="flex items-center gap-3">
-    <span style={{ width: size, height: size }} className="grid place-items-center rounded-xl bg-gradient-to-br from-primary to-secondary shadow-glow">
-      <Clapperboard size={size * 0.55} aria-hidden /></span>
-    {text && <span className="text-lg font-bold tracking-tight">CouchCinema</span>}
+  return <div className="flex items-center gap-2.5">
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img src="/vimo-mark.png" alt="" width={size} height={size} style={{ width: size, height: 'auto' }} />
+    {text && <span className="text-2xl font-semibold lowercase leading-none tracking-tight">vimo</span>}
   </div>;
 }
 
@@ -20,7 +20,7 @@ type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'pri
 export const Button = forwardRef<HTMLButtonElement, BtnProps>(({ variant = 'primary', loading, disabled, className, children, ...p }, ref) => (
   <button ref={ref} disabled={disabled || loading} aria-busy={loading}
     className={cx('flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl px-5 font-semibold transition active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50',
-      variant === 'primary' ? 'bg-primary text-white shadow-glow hover:bg-[#6D28D9]' : 'bg-surface2 text-ink hover:bg-[#2a2a33]', className)} {...p}>
+      variant === 'primary' ? 'bg-primary text-white shadow-glow hover:bg-[#7A35A6]' : 'bg-surface2 text-ink hover:bg-[#25214a]', className)} {...p}>
     {loading && <Loader2 size={18} className="animate-spin" aria-hidden />}{children}</button>));
 Button.displayName = 'Button';
 
@@ -60,7 +60,7 @@ export function ModeCard({ icon, title, desc, tag, onClick }: { icon: React.Reac
 export function IconButton({ label, active, danger, badge, className, children, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean; danger?: boolean; badge?: number }) {
   return <button aria-label={label} title={label} aria-pressed={active} {...p}
     className={cx('relative grid h-9 w-9 shrink-0 place-items-center rounded-xl transition active:scale-95 disabled:opacity-50 min-[380px]:h-10 min-[380px]:w-10 sm:h-11 sm:w-11',
-      danger ? 'bg-accent/20 text-accent hover:bg-accent/30' : active ? 'bg-primary text-white' : 'bg-surface2 text-ink hover:bg-[#2a2a33]', className)}>
+      danger ? 'bg-accent/20 text-accent hover:bg-accent/30' : active ? 'bg-primary text-white' : 'bg-surface2 text-ink hover:bg-[#25214a]', className)}>
     {children}{!!badge && <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-center text-[11px] font-bold text-bg">{badge}</span>}</button>;
 }
 
