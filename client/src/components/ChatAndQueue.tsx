@@ -11,10 +11,11 @@ const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', 
 
 export default function ChatAndQueue({ socket, selfId, chat, queue, current, view }: { view?: 'chat' | 'queue'; socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
   const [itab, setTab] = useState<'chat' | 'queue'>('chat'); const tab = view ?? itab;
-  const [msgs, setMsgs] = useState(chat), [text, setText] = useState(''), [url, setUrl] = useState(''), [err, setErr] = useState('');
+  const msgs = chat; // the room page owns the history, so it survives reconnects and layout changes
+  const [text, setText] = useState(''), [url, setUrl] = useState(''), [err, setErr] = useState('');
   const [unread, setUnread] = useState(0);
   const end = useRef<HTMLDivElement>(null); const tabRef = useRef(tab); tabRef.current = tab;
-  useEffect(() => { const f = (m: ChatMessage) => { setMsgs((x) => [...x, m]);
+  useEffect(() => { const f = (m: ChatMessage) => {
       if (!m.system && m.from !== selfId) { beep(); if (tabRef.current !== 'chat') setUnread((n) => n + 1); } };
     socket.on('chat:message', f); return () => { socket.off('chat:message', f); }; }, [socket, selfId]);
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [msgs, tab]);
@@ -23,7 +24,13 @@ export default function ChatAndQueue({ socket, selfId, chat, queue, current, vie
   async function add(e: React.FormEvent) {
     e.preventDefault(); const id = ytId(url.trim());
     if (!id) return setErr('That doesn’t look like a YouTube link.'); setErr('');
-    let title = id; try { const r = await fetch(`https://www.youtube.com/oembed?url=https://youtu.be/${id}&format=json`); title = (await r.json()).title || id; } catch {}
+    let title = id;
+    try { // oEmbed tells us up front whether the video exists and may be embedded
+      const r = await fetch(`https://www.youtube.com/oembed?url=https://youtu.be/${id}&format=json`);
+      if (r.status === 404) return setErr('That video wasn’t found, or it is private.');
+      if (r.status === 401 || r.status === 403) return setErr('The owner doesn’t allow this video to be embedded, so it can’t play here.');
+      if (r.ok) title = (await r.json()).title || id;
+    } catch {}
     socket.emit('queue:add', { id, title, addedBy: selfId }); setUrl('');
   }
   const tabBtn = (t: 'chat' | 'queue', Icon: typeof ListVideo, label: string, badge = 0) =>

@@ -15,12 +15,13 @@ export default function RoomControls(p: RoomControlsProps) {
   const [pop, setPop] = useState<Pop>(null), [note, setNote] = useState('');
   const toggle = (k: Pop) => setPop(pop === k ? null : k);
   const invite = async () => { setNote((await p.onInvite()) ? 'Invite link copied' : 'Copy failed. Share the page URL instead.'); setTimeout(() => setNote(''), 2500); };
+  const dir = p.compact ? 'top-full mt-2' : 'bottom-full mb-2';
   const chatOn = p.panelOpen && p.panelTab === 'chat', peopleOn = p.panelOpen && p.panelTab === 'people';
   return <div className="relative" onKeyDown={(e) => e.key === 'Escape' && setPop(null)}>
     {pop && <button aria-label="Close menu" tabIndex={-1} onClick={() => setPop(null)} className="fixed inset-0 z-40 cursor-default" />}
-    {pop === 'react' && <div role="menu" aria-label="Reactions" className="absolute bottom-full left-1/2 z-50 mb-2 flex -translate-x-1/2 gap-0.5 rounded-2xl border border-white/10 bg-surface2 p-1.5 shadow-card">
+    {pop === 'react' && <div role="menu" aria-label="Reactions" className={cx('absolute left-1/2 z-50 flex -translate-x-1/2 gap-0.5 rounded-2xl border border-white/10 bg-surface2 p-1.5 shadow-card', dir)}>
       {REACTIONS.map((e) => <button key={e} role="menuitem" aria-label={`React ${e}`} onClick={() => p.onReact(e)} className="rounded-xl px-1.5 py-1 text-2xl transition hover:bg-surface active:scale-90">{e}</button>)}</div>}
-    {pop === 'settings' && <div role="dialog" aria-label="Room settings" className="absolute bottom-full right-0 z-50 mb-2 w-64 rounded-2xl border border-white/10 bg-surface2 p-4 shadow-card">
+    {pop === 'settings' && <div role="dialog" aria-label="Room settings" className={cx('absolute right-0 z-50 w-64 rounded-2xl border border-white/10 bg-surface2 p-4 shadow-card', dir)}>
       <div className="flex items-center justify-between gap-3 text-sm"><span>Smart Mic<span className="block text-xs text-muted">Mutes your mic while the video plays</span></span>
         <button role="switch" aria-checked={p.smartMic} aria-label="Smart Mic" onClick={() => p.setSmartMic(!p.smartMic)} className={cx('relative h-6 w-11 shrink-0 rounded-full transition', p.smartMic ? 'bg-primary' : 'bg-surface')}>
           <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', p.smartMic ? 'left-[22px]' : 'left-0.5')} /></button></div></div>}
@@ -35,6 +36,6 @@ export default function RoomControls(p: RoomControlsProps) {
       <IconButton label="Invite" onClick={invite}><UserPlus size={18} /></IconButton>
       <IconButton label="Settings" active={pop === 'settings'} aria-haspopup="dialog" onClick={() => toggle('settings')}><Settings size={18} /></IconButton>
       <IconButton label="Leave room" danger onClick={p.onLeave}><LogOut size={18} /></IconButton></div>
-    <p role="status" aria-live="polite" className={cx('pointer-events-none absolute -top-8 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-full bg-surface2 px-3 py-1 text-xs transition-opacity', note ? 'opacity-100' : 'opacity-0')}>{note}</p>
+    <p role="status" aria-live="polite" className={cx(p.compact ? '-bottom-8' : '-top-8', 'pointer-events-none absolute left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-full bg-surface2 px-3 py-1 text-xs transition-opacity', note ? 'opacity-100' : 'opacity-0')}>{note}</p>
   </div>;
 }

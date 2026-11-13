@@ -67,7 +67,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
             <StatusPill online={online ? true : null} label={`${health ? health.people : 0} connected`} /></div></div>
         <div className="grid gap-4 md:grid-cols-3">
           <ModeCard icon={<Youtube />} title="YouTube Watch Party" desc="Paste links, build a queue and watch in perfect sync." tag="Synced playback" onClick={() => start('youtube')} />
-          <ModeCard icon={<HardDrive />} title="Local File Stream (P2P)" desc="Everyone opens the same video file. Nothing is uploaded." tag="Private" onClick={() => start('file')} />
+          <ModeCard icon={<HardDrive />} title="Share a Video File" desc="One person picks a video, it uploads once, and everyone watches in sync." tag="Upload once" onClick={() => start('file')} />
           <ModeCard icon={<Globe />} title="Shared Cloud Browser" desc="Browse Netflix, Prime or Disney+ together in one window." tag="Netflix and more" onClick={() => start('browser')} /></div>
         <Card><form onSubmit={join} className="flex flex-col gap-3 sm:flex-row sm:items-end"><div className="flex-1"><TextField label="Have an invite? Enter a room code or link" value={code} onChange={(e) => setCode(e.target.value)} placeholder="abc123" /></div>
           <Button variant="ghost" className="sm:w-40"><Users size={18} /> Join room</Button></form></Card></>}
@@ -77,6 +77,6 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
           <Button variant="ghost" onClick={() => { sessionStorage.removeItem('passcode'); onLock(); }}><Lock size={18} /> Lock this device</Button></Card></>}
       {view === 'about' && <><h1 className="text-3xl font-bold tracking-tight">About</h1>
         <Card className="max-w-xl space-y-3 text-muted"><p>CouchCinema is a private watch room for up to 10 people, with live camera and voice built in.</p>
-          <p>Your passcode is checked on the server and kept only for this browser session. Local files never leave your device.</p></Card></>}
+          <p>Your passcode is checked on the server and kept only for this browser session. Videos you share are stored in the room’s private storage and removed when the room closes.</p></Card></>}
     </main></div>;
 }
