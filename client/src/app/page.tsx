@@ -24,8 +24,7 @@ export default function Home() {
   }
   return <main className="bg-cinema grid min-h-[100dvh] place-items-center p-5">
     <Card className="w-full max-w-md space-y-6 p-8">
-      <div className="space-y-3 text-center"><div className="flex justify-center"><Logo size={48} text={false} /></div>
-        <h1 className="text-2xl font-bold tracking-tight">CouchCinema</h1><p className="text-muted">Your private cinema. Together, anywhere.</p></div>
+      <div className="space-y-3 text-center"><h1 className="flex justify-center"><span className="sr-only">Vimo</span><Logo size={56} /></h1><p className="text-muted">Better together.</p></div>
       <form onSubmit={unlock} className="space-y-4">
         <PasswordField label="Room passcode" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Enter passcode" error={err} disabled={busy} autoFocus />
         <Button loading={busy} disabled={!pass}>{busy ? 'Checking…' : 'Join Private Room'}</Button></form>
