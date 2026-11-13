@@ -45,7 +45,7 @@ export function PasswordField({ label, error, ...p }: React.InputHTMLAttributes<
 }
 
 export function StatusPill({ online, label, title, compact }: { online: boolean | null; label: string; title?: string; compact?: boolean }) {
-  return <span title={title} className={cx('inline-flex items-center gap-1.5 rounded-full bg-surface2 text-muted', compact ? 'px-2 py-0.5 text-xs' : 'gap-2 px-3 py-1 text-sm')}>
+  return <span title={title} className={cx('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-surface2 text-muted', compact ? 'px-2 py-0.5 text-xs' : 'gap-2 px-3 py-1 text-sm')}>
     <span className={cx('h-2 w-2 rounded-full', online ? 'bg-emerald-400' : online === null ? 'bg-muted' : 'bg-accent')} aria-hidden />{label}</span>;
 }
 

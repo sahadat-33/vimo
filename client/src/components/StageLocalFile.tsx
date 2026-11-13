@@ -11,7 +11,7 @@ const Bar = ({ pct }: { pct: number }) => <div className="h-2 w-64 max-w-full ov
 /** One person uploads the video to shared storage; every participant's player loads the same file and stays in sync through the room playback state. */
 export default function StageLocalFile({ socket, playback, emitPlayback, onDrift, interacted, file }: StageProps) {
   const vid = useRef<HTMLVideoElement>(null), xhr = useRef<XMLHttpRequest | null>(null), lastFile = useRef<File | null>(null);
-  const until = useRef(0), aborted = useRef(false), retried = useRef(false), forcedMute = useRef(false);
+  const lastPlayCmd = useRef(0), until = useRef(0), aborted = useRef(false), retried = useRef(false), forcedMute = useRef(false);
   const pbRef = useRef(playback); pbRef.current = playback;
   const inter = useRef(interacted); inter.current = interacted;
   const emit = useRef(emitPlayback); emit.current = emitPlayback;
@@ -31,10 +31,16 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
     const t = expected();
     if (Math.abs(v.currentTime - t) > 0.8) act(() => { v.currentTime = t; });
     if (v.playbackRate !== pb.rate) act(() => { v.playbackRate = pb.rate; });
-    if (pb.playing && v.paused) act(() => { v.play().catch(() => {}); });
+    if (pb.playing && v.paused) { lastPlayCmd.current = Date.now(); act(() => { v.play().catch(() => {}); }); }
     else if (!pb.playing && !v.paused) act(() => v.pause());
   };
-  const snap = () => { const v = vid.current; if (v && !remote()) emit.current({ playing: !v.paused, time: v.currentTime, rate: v.playbackRate }); };
+  const snap = () => { // only a real user action is broadcast; echoes of a command we applied (or a refused autoplay) are not
+    const v = vid.current; if (!v || remote()) return;
+    const playing = !v.paused, room = pbRef.current, recent = Date.now() - lastPlayCmd.current < 8000;
+    if (playing === room.playing && v.playbackRate === room.rate && (recent || Math.abs(v.currentTime - expected()) < 1.5)) return;
+    if (!playing && room.playing && !inter.current && recent) return;
+    emit.current({ playing, time: v.currentTime, rate: v.playbackRate });
+  };
 
   useEffect(() => { apply(); }, [playback]); // eslint-disable-line
   useEffect(() => { // first tap: restore sound

@@ -21,6 +21,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
   const host = useRef<HTMLDivElement>(null), player = useRef<any>(null), ready = useRef(false);
   const until = useRef(0);                       // isRemoteUpdate mutex: local player events are ignored until this time
   const lastTick = useRef({ t: 0, at: 0 });
+  const lastPlayCmd = useRef(0), pauseT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined); // when WE last told the player to play; pending 'is this pause real?' check
   const forcedMute = useRef(false);              // we muted the player only because the browser blocks sound before a tap
   const pbRef = useRef(playback); pbRef.current = playback;
   const curRef = useRef(current); curRef.current = current;
@@ -31,7 +32,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
 
   const expected = () => { const p = pbRef.current; return p.time + (p.playing ? ((Date.now() - p.at) / 1000) * p.rate : 0); };
   const remote = () => Date.now() < until.current;
-  const act = (fn: () => void, ms = 900) => { until.current = Date.now() + ms; lastTick.current = { t: 0, at: 0 }; try { fn(); } catch {} };
+  const act = (fn: () => void, ms = 1500) => { until.current = Date.now() + ms; lastTick.current = { t: 0, at: 0 }; try { fn(); } catch {} };
   const snapshot = (playing: boolean) => ({ playing, time: player.current?.getCurrentTime?.() ?? 0, rate: player.current?.getPlaybackRate?.() ?? 1 });
 
   /** Bring the player in line with the room state. Safe to call at any time; it only touches the player when something differs. */
@@ -41,12 +42,12 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
     if (!cur) { if (p.getPlayerState?.() === 1) act(() => p.pauseVideo()); return; }
     if (pb.playing && !inter.current && !p.isMuted?.()) { p.mute(); forcedMute.current = true; } // muted autoplay is always allowed
     if (p.getVideoData?.().video_id !== cur.id) {
-      setErr(''); act(() => (pb.playing ? p.loadVideoById(cur.id, expected()) : p.cueVideoById(cur.id, expected())), 4000); return;
+      setErr(''); if (pb.playing) lastPlayCmd.current = Date.now(); act(() => (pb.playing ? p.loadVideoById(cur.id, expected()) : p.cueVideoById(cur.id, expected())), 4000); return;
     }
     if (Math.abs(p.getCurrentTime() - expected()) > 0.8) act(() => p.seekTo(expected(), true));
     if (p.getPlaybackRate() !== pb.rate) act(() => p.setPlaybackRate(pb.rate));
     const st = p.getPlayerState();
-    if (pb.playing && st !== 1 && st !== 3 && st !== 0) act(() => p.playVideo());
+    if (pb.playing && st !== 1 && st !== 3 && st !== 0) { lastPlayCmd.current = Date.now(); act(() => p.playVideo()); }
     else if (!pb.playing && (st === 1 || st === 3)) act(() => p.pauseVideo());
   };
 
@@ -63,10 +64,22 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
           onReady: () => { ready.current = true; apply(); },
           onStateChange: (e: any) => {
             if (e.data === 0 && curRef.current) socket.emit('video:ended', curRef.current.id); // the server ignores duplicates, so every client can report it
+            if (e.data !== 1 && e.data !== 2) { clearTimeout(pauseT.current); return; } // buffering etc. cancels a pending pause
             if (remote()) return;
-            if (e.data === 1) emit.current(snapshot(true)); else if (e.data === 2) emit.current(snapshot(false));
+            clearTimeout(pauseT.current);
+            // Only a real user action may reach the other people. Echoes of a command we just applied, and a browser refusing
+            // to autoplay, must never be broadcast, or every device keeps stopping and starting the others.
+            const playing = e.data === 1, room = pbRef.current, t = player.current?.getCurrentTime?.() ?? 0;
+            if (playing === room.playing && (Date.now() - lastPlayCmd.current < 8000 || Math.abs(t - expected()) < 1.5)) return;
+            if (playing) { emit.current(snapshot(true)); return; }
+            if (!room.playing) return;
+            pauseT.current = setTimeout(() => { // wait a moment: seeking and buffering cause brief pauses that nobody pressed
+              const q = player.current; if (!q || q.getPlayerState?.() !== 2 || remote()) return;
+              if (!inter.current && Date.now() - lastPlayCmd.current < 8000) return; // autoplay was refused on this device
+              emit.current(snapshot(false));
+            }, 400);
           },
-          onPlaybackRateChange: () => { if (!remote()) emit.current(snapshot(player.current.getPlayerState() === 1)); },
+          onPlaybackRateChange: () => { const q = player.current; if (!remote() && q && q.getPlaybackRate() !== pbRef.current.rate) emit.current(snapshot(q.getPlayerState() === 1)); },
           onError: (e: any) => setErr(YT_ERR[e.data as number] ?? `YouTube couldn’t play this video (error ${e.data}).`),
         } });
       timer = setInterval(() => {
@@ -86,7 +99,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
       setErr(e.message === 'timeout' ? 'YouTube took too long to load. Check your connection, then tap Retry.'
         : 'YouTube’s player script was blocked. An ad blocker, private DNS or browser shield may be stopping youtube.com. Allow it for this site, then tap Retry.');
     });
-    return () => { dead = true; ready.current = false; clearInterval(timer); player.current?.destroy?.(); player.current = null; };
+    return () => { dead = true; ready.current = false; clearInterval(timer); clearTimeout(pauseT.current); player.current?.destroy?.(); player.current = null; };
   }, [attempt]); // eslint-disable-line
 
   useEffect(() => { apply(); }, [playback, current?.id]); // eslint-disable-line
