@@ -44,8 +44,8 @@ export function PasswordField({ label, error, ...p }: React.InputHTMLAttributes<
     {error && <p id={`${id}-e`} role="alert" className="text-sm text-accent">{error}</p>}</div>;
 }
 
-export function StatusPill({ online, label }: { online: boolean | null; label: string }) {
-  return <span className="inline-flex items-center gap-2 rounded-full bg-surface2 px-3 py-1 text-sm text-muted">
+export function StatusPill({ online, label, title, compact }: { online: boolean | null; label: string; title?: string; compact?: boolean }) {
+  return <span title={title} className={cx('inline-flex items-center gap-1.5 rounded-full bg-surface2 text-muted', compact ? 'px-2 py-0.5 text-xs' : 'gap-2 px-3 py-1 text-sm')}>
     <span className={cx('h-2 w-2 rounded-full', online ? 'bg-emerald-400' : online === null ? 'bg-muted' : 'bg-accent')} aria-hidden />{label}</span>;
 }
 
@@ -59,7 +59,7 @@ export function ModeCard({ icon, title, desc, tag, onClick }: { icon: React.Reac
 
 export function IconButton({ label, active, danger, badge, className, children, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean; danger?: boolean; badge?: number }) {
   return <button aria-label={label} title={label} aria-pressed={active} {...p}
-    className={cx('relative grid h-11 w-11 shrink-0 place-items-center rounded-xl transition active:scale-95 disabled:opacity-50',
+    className={cx('relative grid h-9 w-9 shrink-0 place-items-center rounded-xl transition active:scale-95 disabled:opacity-50 min-[380px]:h-10 min-[380px]:w-10 sm:h-11 sm:w-11',
       danger ? 'bg-accent/20 text-accent hover:bg-accent/30' : active ? 'bg-primary text-white' : 'bg-surface2 text-ink hover:bg-[#2a2a33]', className)}>
     {children}{!!badge && <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-center text-[11px] font-bold text-bg">{badge}</span>}</button>;
 }
