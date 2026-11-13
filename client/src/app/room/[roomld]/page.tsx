@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import { Info, Maximize2, Users } from 'lucide-react';
 import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
@@ -26,7 +26,16 @@ function useLayout(): Layout {
   return l;
 }
 export default function Room() {
-  const { roomId } = useParams<{ roomId: string }>();
+  // Resolve the room ID from the route parameter, with a pathname fallback
+  // so shared invite URLs still work if the route parameter key is mismatched.
+  const params = useParams<Record<string, string | string[]>>();
+  const pathname = usePathname();
+  const paramValue = params?.roomId ?? Object.values(params ?? {}).find((value) => typeof value === 'string' || Array.isArray(value));
+  const candidate = Array.isArray(paramValue) ? paramValue[0] : paramValue;
+  const pathMatch = pathname.match(/^\/room\/([^/]+)/i);
+  let roomId = String(candidate || pathMatch?.[1] || '').trim();
+  try { roomId = decodeURIComponent(roomId); } catch { roomId = ''; }
+
   const [ready, setReady] = useState(false), [hasPass, setHasPass] = useState(false), [profile, setProfile] = useState<Profile | null>(null);
   useEffect(() => {
     try { const p = localStorage.getItem('profile'); if (p) setProfile(JSON.parse(p)); } catch {}
@@ -34,6 +43,7 @@ export default function Room() {
   }, []);
   if (!ready) return <RoomSkeleton />;
   if (!profile || !hasPass) return <JoinGate needPass={!hasPass} initial={profile} onDone={(p) => { setProfile(p); setHasPass(true); }} />;
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(roomId)) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><p role="alert" className="text-accent">This invite link is missing a valid room code. Ask the host to create a new room and share its invite link.</p></div>;
   return <RoomInner roomId={roomId} profile={profile} />;
 }
 
