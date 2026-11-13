@@ -1,10 +1,10 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Youtube, FileVideo, Globe, Maximize2 } from 'lucide-react';
+import { Info, Maximize2, Users } from 'lucide-react';
 import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
-import { getPass } from '@/lib/types';
+import { getCid, getPass } from '@/lib/types';
 import { useCall } from '@/lib/useCall';
 import StageYouTube from '@/components/StageYouTube';
 import StageLocalFile from '@/components/StageLocalFile';
@@ -25,9 +25,6 @@ function useLayout(): Layout {
   }, []);
   return l;
 }
-const MODES: { id: Mode; label: string; Icon: typeof Youtube }[] = [
-  { id: 'youtube', label: 'YouTube', Icon: Youtube }, { id: 'file', label: 'File', Icon: FileVideo }, { id: 'browser', label: 'Browser', Icon: Globe }];
-
 export default function Room() {
   const { roomId } = useParams<{ roomId: string }>();
   const [ready, setReady] = useState(false), [hasPass, setHasPass] = useState(false), [profile, setProfile] = useState<Profile | null>(null);
@@ -51,13 +48,15 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
   const [state, setState] = useState<RoomState | null>(null);
   const [pb, setPb] = useState<LocalPlayback>({ playing: false, time: 0, rate: 1, at: Date.now() });
   const [err, setErr] = useState('');
+  const modeApplied = useRef(false);
 
   useEffect(() => {
     const s = getSocket(); setSocket(s); setOnline(s.connected);
-    const join = () => s.emit('room:join', roomId, profile, (r) => {
+    const join = () => s.emit('room:join', roomId, { ...profile, cid: getCid() }, (r) => {
       if (r.error || !r.state) return setErr(r.error || 'Could not join');
       const wanted = new URLSearchParams(location.search).get('mode');
-      if (wanted && ['youtube', 'file', 'browser'].includes(wanted) && r.state.members.length <= 1 && r.state.mode !== wanted) s.emit('mode:set', wanted as Mode);
+      if (!modeApplied.current && wanted && ['youtube', 'file', 'browser'].includes(wanted) && r.state.members.length <= 1 && r.state.mode !== wanted) s.emit('mode:set', wanted as Mode);
+      modeApplied.current = true;
       setErr(''); setSelfId(r.selfId!); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
     });
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
@@ -111,13 +110,13 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
 
   const toggleTab = (t: 'people' | 'chat') => { if (open && tab === t) setOpen(false); else { setTab(t); setOpen(true); } };
   const invite = async () => { try { await navigator.clipboard.writeText(`${location.origin}/room/${roomId}`); return true; } catch { return false; } };
-  const leave = () => { socket.disconnect(); router.push('/'); };
+  const leave = () => { socket.emit('room:leave'); setTimeout(() => socket.disconnect(), 200); router.push('/'); };
   const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
 
   const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback, onDrift };
   const next = state.queue[0];
   const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} onEnded={() => { if (isHost && next) socket.emit('video:change', next); }} />
-    : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} initial={state.hb} controller={state.controller} />;
+    : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
       {stageInner}
@@ -130,22 +129,20 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
 
-  const netChip = call.state === 'error' ? { ok: false as boolean | null, t: 'Call: unavailable' }
-    : call.state === 'joining' ? { ok: null, t: 'Call: connecting' }
-    : call.net === 'good' ? { ok: true, t: 'Network: good' } : call.net === 'low' ? { ok: false, t: 'Network: weak' }
-    : call.net === 'very-low' ? { ok: false, t: 'Network: poor' } : { ok: null, t: 'Network: measuring' };
-  const syncChip = state.mode === 'browser' ? { ok: null as boolean | null, t: 'Sync: n/a (shared browser)' }
-    : sync === 'synced' ? { ok: true, t: 'Sync: in sync' } : sync === 'resyncing' ? { ok: false, t: 'Sync: resyncing' } : { ok: null, t: 'Sync: waiting for player' };
+  const netChip = call.state === 'error' ? { ok: false as boolean | null, t: 'Call off', tip: 'Call unavailable' }
+    : call.state === 'joining' ? { ok: null, t: 'Connecting', tip: 'Connecting to the call' }
+    : call.net === 'good' ? { ok: true, t: 'Good', tip: 'Network quality: good' } : call.net === 'low' ? { ok: false, t: 'Weak', tip: 'Network quality: weak' }
+    : call.net === 'very-low' ? { ok: false, t: 'Poor', tip: 'Network quality: poor' } : { ok: null, t: 'Checking', tip: 'Measuring network quality' };
+  const syncChip = sync === 'synced' ? { ok: true as boolean | null, t: 'In sync', tip: 'Playback is in sync' }
+    : sync === 'resyncing' ? { ok: false, t: 'Resyncing', tip: 'Correcting playback drift' } : { ok: null, t: 'Waiting', tip: 'Waiting for the player to report' };
   const topBar = (
-    <div className="flex flex-wrap items-center gap-2 p-2">
-      <nav className="flex gap-1" aria-label="Watch mode">
-        {MODES.map(({ id, label, Icon }) => (
-          <button key={id} onClick={() => socket.emit('mode:set', id)} aria-pressed={state.mode === id}
-            className={cx('flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-sm font-semibold transition', state.mode === id ? 'bg-primary text-white' : 'bg-surface2 text-muted hover:text-ink')}>
-            <Icon size={16} /> {label}</button>))}</nav>
-      <div className="ml-auto flex flex-wrap gap-1.5" aria-label="Connection status">
-        <StatusPill online={online} label={online ? 'Server: connected' : 'Server: reconnecting'} />
-        <StatusPill online={netChip.ok} label={netChip.t} /><StatusPill online={syncChip.ok} label={syncChip.t} /></div></div>);
+    <div className="flex items-center gap-2 px-3 py-2">
+      <span className="flex min-w-0 items-center gap-2 text-sm font-semibold"><span className="truncate">Room {roomId}</span>
+        <span className="flex shrink-0 items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs font-medium text-muted"><Users size={12} />{state.members.length}/10</span></span>
+      <div className="ml-auto flex items-center gap-1.5" aria-label="Connection status">
+        <StatusPill compact online={online} label={online ? 'Online' : 'Offline'} title={online ? 'Server connected' : 'Reconnecting to the server'} />
+        <StatusPill compact online={netChip.ok} label={netChip.t} title={netChip.tip} />
+        {state.mode !== 'browser' && <StatusPill compact online={syncChip.ok} label={syncChip.t} title={syncChip.tip} />}</div></div>);
   const controls = (compact?: boolean) => (
     <RoomControls compact={compact} mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
       panelOpen={open} panelTab={tab} onToggleTab={toggleTab} unread={unread} onReact={(e) => socket.emit('reaction', e)} onInvite={invite}
@@ -155,7 +152,11 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       people={showPeople ? <FeedGrid members={state.members} parts={call.parts} selfId={selfId} callState={call.state} /> : null}
       chat={<ChatAndQueue view={tab === 'queue' ? 'queue' : 'chat'} socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} />} />);
   const banner = !online && <p role="status" className="bg-accent px-3 py-1 text-center text-sm font-medium text-bg">Reconnecting to the server…</p>;
-  const callErr = call.error && <p role="alert" className="px-3 text-xs text-accent">{call.error}</p>;
+  const callErr = call.state === 'error'
+    ? <div role="alert" className="mx-2 mt-2 flex items-center justify-between gap-2 rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent"><span>{call.error}</span>
+        <button onClick={call.retry} className="shrink-0 rounded-lg bg-accent/20 px-2.5 py-1 font-semibold">Retry</button></div>
+    : call.mediaNote ? <p role="status" className="mx-2 mt-2 flex items-start gap-1.5 px-2 text-xs text-muted"><Info size={14} className="mt-px shrink-0 text-accent" />{call.mediaNote}</p>
+    : call.state === 'joined' && !call.mic && !call.cam ? <p className="mx-2 mt-2 px-2 text-xs text-muted">Listening only. Tap the mic or camera to join with audio or video.</p> : null;
 
   let body: React.ReactNode;
   if (layout === 'landscape') body = (
