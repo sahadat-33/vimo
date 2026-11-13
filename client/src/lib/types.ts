@@ -41,7 +41,15 @@ export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:40
 export const getPass = () => (typeof window === 'undefined' ? '' : sessionStorage.getItem('passcode') || '');
 export function getCid(): string { // stable per-tab id so reconnects never create a second participant
   if (typeof window === 'undefined') return '';
+  const valid = (value: string | null): value is string => !!value && /^[A-Za-z0-9_-]{8,64}$/.test(value);
   let c = sessionStorage.getItem('cid');
-  if (!c) { c = (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^\w-]/g, ''); sessionStorage.setItem('cid', c); }
+  if (!valid(c)) {
+    const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '')
+      : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    c = random.slice(0, 64);
+    if (!valid(c)) c = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(0, 64);
+    sessionStorage.setItem('cid', c);
+  }
   return c;
 }
