@@ -126,7 +126,7 @@ io.on('connection', (sock) => {
     if (typeof cb !== 'function') return;
     if (!allow(sock, 'room:join')) return cb({ error: 'Slow down a little.' });
     if (typeof roomId !== 'string' || !ROOM_RE.test(roomId)) {
-      console.warn('room:join rejected: invalid roomId');
+      console.warn('room:join rejected: invalid roomId', { received: roomId, type: typeof roomId });
       return cb({ error: 'Invalid room code. Reopen the invite link or check the room code.' });
     }
     const cid = profile && typeof profile === 'object' && typeof profile.cid === 'string' ? profile.cid.trim() : '';
