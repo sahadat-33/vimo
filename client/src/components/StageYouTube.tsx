@@ -6,13 +6,12 @@ import type { StageProps } from '@/lib/types';
 declare global { interface Window { YT: any; onYouTubeIframeAPIReady?: () => void } }
 const loadYT = () => new Promise<void>((res, rej) => {
   if (window.YT?.Player) return res();
-  const prev = window.onYouTubeIframeAPIReady;
-  window.onYouTubeIframeAPIReady = () => { prev?.(); res(); };
+  const prev = window.onYouTubeIframeAPIReady, timer = setTimeout(() => rej(new Error('timeout')), 20000);
+  window.onYouTubeIframeAPIReady = () => { clearTimeout(timer); prev?.(); res(); };
   if (!document.getElementById('yt-api')) {
     const s = document.createElement('script'); s.id = 'yt-api'; s.src = 'https://www.youtube.com/iframe_api';
-    s.onerror = () => { s.remove(); rej(new Error('blocked')); }; document.head.appendChild(s);
+    s.onerror = () => { clearTimeout(timer); s.remove(); rej(new Error('blocked')); }; document.head.appendChild(s);
   }
-  setTimeout(() => rej(new Error('timeout')), 15000);
 });
 const OWNER = 'The owner doesn’t allow this video to be played outside YouTube.';
 const YT_ERR: Record<number, string> = { 2: 'That YouTube link isn’t valid.', 5: 'Your browser couldn’t play this video. Reload the page and try again.',
@@ -28,7 +27,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
   const inter = useRef(interacted); inter.current = interacted;
   const emit = useRef(emitPlayback); emit.current = emitPlayback;
   const driftRef = useRef(onDrift); driftRef.current = onDrift;
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState(''), [loadFail, setLoadFail] = useState(false), [attempt, setAttempt] = useState(0);
 
   const expected = () => { const p = pbRef.current; return p.time + (p.playing ? ((Date.now() - p.at) / 1000) * p.rate : 0); };
   const remote = () => Date.now() < until.current;
@@ -53,8 +52,10 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
 
   useEffect(() => {
     let dead = false, timer: ReturnType<typeof setInterval> | undefined, n = 0;
+    setErr(''); setLoadFail(false);
     loadYT().then(() => {
       if (dead || !host.current) return;
+      try {
       const el = document.createElement('div'); host.current.replaceChildren(el);
       player.current = new window.YT.Player(el, { width: '100%', height: '100%', videoId: curRef.current?.id,
         playerVars: { playsinline: 1, rel: 0, modestbranding: 1, origin: window.location.origin },
@@ -79,9 +80,14 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
         if (last.at && Math.abs(t - last.t - adv) > 1.5) emit.current(snapshot(st === 1));       // this user scrubbed (playing or paused): tell everyone
         else if (n % 3 === 0 && Math.abs(t - expected()) > 0.8) act(() => p.seekTo(expected(), true)); // drift heartbeat
       }, 1000);
-    }).catch(() => !dead && setErr('The YouTube player couldn’t load. Check your connection or disable any ad blocker for this site, then reload.'));
+      } catch (e) { setLoadFail(true); setErr(`The YouTube player couldn’t start (${e instanceof Error ? e.message : 'unknown error'}). Tap Retry.`); }
+    }, (e: Error) => {
+      if (dead) return; setLoadFail(true);
+      setErr(e.message === 'timeout' ? 'YouTube took too long to load. Check your connection, then tap Retry.'
+        : 'YouTube’s player script was blocked. An ad blocker, private DNS or browser shield may be stopping youtube.com. Allow it for this site, then tap Retry.');
+    });
     return () => { dead = true; ready.current = false; clearInterval(timer); player.current?.destroy?.(); player.current = null; };
-  }, []); // eslint-disable-line
+  }, [attempt]); // eslint-disable-line
 
   useEffect(() => { apply(); }, [playback, current?.id]); // eslint-disable-line
   useEffect(() => { // first tap: restore sound that was muted only to satisfy the autoplay rule
@@ -94,6 +100,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
     {!current && !err && <p className="absolute inset-0 grid place-items-center p-6 text-center text-cream/70">Paste a YouTube link in the Queue tab to start.</p>}
     {err && <div className="absolute inset-0 z-10 grid place-items-center bg-black/85 p-6 text-center"><div className="max-w-sm space-y-3">
       <p role="alert" className="text-sm">{err}</p>
-      {current && <button onClick={() => socket.emit('video:ended', current.id)} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white"><SkipForward size={16} /> Skip this video</button>}</div></div>}
+      {loadFail && <button onClick={() => { document.getElementById('yt-api')?.remove(); setAttempt((n) => n + 1); }} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white">Retry</button>}
+      {current && !loadFail && <button onClick={() => socket.emit('video:ended', current.id)} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white"><SkipForward size={16} /> Skip this video</button>}</div></div>}
   </div>;
 }

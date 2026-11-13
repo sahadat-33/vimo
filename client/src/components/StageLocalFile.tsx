@@ -72,7 +72,7 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
     if (prep.error === 'not_configured') return setUnset(true);
     if (prep.error || !prep.uploadUrl || !prep.key) return setMsg(prep.error || 'Could not start the upload.');
     setUp({ pct: 0, loaded: 0, total: f.size });
-    let last = -10;
+    let last = -10, why = '';
     const sent = await new Promise<boolean>((res) => {
       const x = new XMLHttpRequest(); xhr.current = x;
       x.open('PUT', prep.uploadUrl!); x.setRequestHeader('Content-Type', type);
@@ -80,10 +80,16 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
         if (!e.lengthComputable) return; const pct = Math.round((e.loaded / e.total) * 100); setUp({ pct, loaded: e.loaded, total: e.total });
         if (pct - last >= 2 || pct === 100) { last = pct; socket.emit('file:progress', pct); }
       };
-      x.onload = () => res(x.status >= 200 && x.status < 300); x.onerror = () => res(false); x.onabort = () => res(false); x.send(f);
+      x.onload = () => {
+        if (x.status >= 200 && x.status < 300) return res(true);
+        const code = (x.responseText.match(/<Code>([^<]+)<\/Code>/) || [])[1];
+        why = `Storage refused the upload (HTTP ${x.status}${code ? ', ' + code : ''}). Check the S3 settings on the server (region, key ID, application key, bucket).`; res(false);
+      };
+      x.onerror = () => { why = `The browser couldn’t reach storage. This is almost always a missing CORS rule on the bucket: it must allow PUT from ${location.origin}.`; res(false); };
+      x.onabort = () => res(false); x.ontimeout = () => { why = 'The upload timed out. Check your connection and retry.'; res(false); }; x.send(f);
     });
     xhr.current = null;
-    if (!sent) { socket.emit('file:progress', -1); setUp(null); if (!aborted.current) setMsg('The upload failed. Check your connection and retry. If it keeps failing, the storage bucket’s CORS rule is probably missing.'); return; }
+    if (!sent) { socket.emit('file:progress', -1); setUp(null); if (!aborted.current) setMsg(why || 'The upload failed. Check your connection and retry.'); return; }
     const done = await new Promise<{ ok?: boolean; error?: string }>((res) => socket.emit('file:ready', prep.key!, res));
     socket.emit('file:progress', -1); setUp(null);
     if (!done.ok) setMsg(done.error || 'The server could not confirm the upload.');
@@ -100,11 +106,11 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
   return <div className="relative h-full w-full bg-black">
     <video ref={vid} src={src || undefined} className="h-full w-full object-contain" playsInline preload="auto" controls={!!src}
       onLoadedMetadata={apply} onCanPlay={apply} onPlay={snap} onPause={snap} onSeeked={snap} onRateChange={snap} onError={src ? onErr : undefined} />
-    {!src && <div className="absolute inset-0 grid place-items-center overflow-y-auto p-5 text-center"><div className="flex max-w-sm flex-col items-center gap-3 text-muted">
-      <FileVideo size={36} className="text-secondary" />
+    {!src && <div className="absolute inset-0 overflow-y-auto p-4 text-center"><div className="mx-auto flex min-h-full max-w-sm flex-col items-center justify-center gap-3 text-muted">
+      {!msg && <FileVideo size={32} className="text-secondary" />}
       {up ? null : others ? <><p><span className="font-semibold text-ink">{others.name}</span> is uploading a video…</p><Bar pct={others.pct} /><p className="text-xs">{others.pct}%. It will start for everyone automatically.</p></>
         : <><p className="text-base font-semibold text-ink">Share a video with everyone</p>
-          <p className="text-sm">Pick a video once. It uploads to the room and plays for everyone automatically. Nobody else needs the file. MP4 works best.</p>
+          <p className="hidden text-sm min-[420px]:block">Pick a video once. It uploads to the room and plays for everyone automatically. Nobody else needs the file. MP4 works best.</p>
           <label className={btn}>Choose video<input type="file" accept="video/*" className="sr-only" onChange={pick} /></label></>}
       {unset && <div role="alert" className="space-y-2 rounded-xl bg-surface p-3 text-left text-sm"><p className="text-accent">Shared upload isn’t set up on this server yet.</p>
         <p>The host needs to add the storage settings (see the setup notes). Until then you can watch together if everyone opens the same file on their own device.</p>
