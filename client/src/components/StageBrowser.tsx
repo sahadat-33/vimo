@@ -22,7 +22,7 @@ export default function StageBrowser({ socket, selfId, members, initial: info, c
     (async () => { try {
       const h = await Hyperbeam(box.current!, info.embedUrl, myAdmin ? { adminToken: myAdmin } : {});
       if (dead) return h.destroy(); hb.current = h;
-      if (myAdmin) h.updateControlDisabled?.(h.userId, false);
+      if (myAdmin) await h.setPermissions(h.userId, { control_disabled: false });
       setErr('');
     } catch { setErr('Could not open the virtual browser.'); } })();
     return () => { dead = true; hb.current?.destroy(); hb.current = null; };

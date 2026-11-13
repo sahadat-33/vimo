@@ -24,7 +24,21 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
   }, []);
 
   const start = (m: Mode) => router.push(`/room/${rid()}?mode=${m}`);
-  const join = (e: React.FormEvent) => { e.preventDefault(); const id = code.trim().split('/').filter(Boolean).pop(); if (id) router.push(`/room/${id}`); };
+  const join = (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = code.trim();
+    if (!raw) return;
+    let id = raw;
+    try {
+      const parsed = new URL(raw, window.location.origin);
+      const match = parsed.pathname.match(/\/room\/([^/]+)\/?$/);
+      if (match) id = decodeURIComponent(match[1]);
+      else if (parsed.origin === window.location.origin) id = parsed.pathname.replace(/^\/+|\/+$/g, '');
+    } catch {
+      id = raw.split(/[?#]/, 1)[0].split('/').filter(Boolean).pop() || '';
+    }
+    if (/^[A-Za-z0-9_-]{1,32}$/.test(id)) router.push(`/room/${encodeURIComponent(id)}`);
+  };
   function saveName(e: React.FormEvent) {
     e.preventDefault(); let p: Profile = { name: '', avatar: '🐻', color: '#A78BFA' };
     try { p = { ...p, ...JSON.parse(localStorage.getItem('profile') || '{}') }; } catch {}
