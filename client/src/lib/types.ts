@@ -6,7 +6,8 @@ export interface QueueItem { id: string; title: string; addedBy: string }
 export interface Profile { name: string; avatar: string; color: string }
 export interface Member extends Profile { id: string }
 export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean }
-export interface HbInfo { embedUrl: string; adminToken: string }
+export interface HbInfo { embedUrl: string }
+export interface JoinProfile extends Profile { cid: string }
 export interface RoomState { mode: Mode; queue: QueueItem[]; current: QueueItem | null; playback: Playback;
   chat: ChatMessage[]; hb: HbInfo | null; controller: string | null; members: Member[] }
 export type FileSignal =
@@ -20,15 +21,16 @@ export interface ServerToClient {
   playback: (d: Playback & { from: string }) => void;
   'queue:updated': (d: { queue: QueueItem[]; current: QueueItem | null }) => void;
   'chat:message': (m: ChatMessage) => void;
-  'file:signal': (s: FileSignal) => void;
   'browser:controller': (id: string | null) => void;
-  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void;
+  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void;
 }
 export interface ClientToServer {
-  'room:join': (roomId: string, profile: Profile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
+  'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
-  'chat:send': (t: string) => void; 'file:signal': (s: FileSignal) => void; 'browser:control': (id: string | null) => void;
+  'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void;
+  'browser:start': (cb: (r: { ok?: boolean; error?: string }) => void) => void;
+  'browser:control': (c: { action: 'take' | 'release' | 'pass'; to?: string }, cb?: (r: { error?: string }) => void) => void;
 }
 export type AppSocket = Socket<ServerToClient, ClientToServer>;
 export interface StageProps {
@@ -37,3 +39,9 @@ export interface StageProps {
 }
 export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000';
 export const getPass = () => (typeof window === 'undefined' ? '' : sessionStorage.getItem('passcode') || '');
+export function getCid(): string { // stable per-tab id so reconnects never create a second participant
+  if (typeof window === 'undefined') return '';
+  let c = sessionStorage.getItem('cid');
+  if (!c) { c = (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^\w-]/g, ''); sessionStorage.setItem('cid', c); }
+  return c;
+}
