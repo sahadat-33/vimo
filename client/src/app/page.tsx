@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { SERVER, getPass } from '@/lib/types';
+import { SERVER, getPass, setPass } from '@/lib/types';
 import { Button, Card, Logo, PasswordField } from '@/components/ui';
 import Dashboard from '@/components/Dashboard';
 
@@ -18,7 +18,7 @@ export default function Home() {
       const res = await fetch(`${SERVER}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode: pass }) });
       if (res.status === 429) setErr('Too many attempts. Wait a few minutes and try again.');
       else if (!res.ok) setErr('That passcode isn’t right. Check it and try again.');
-      else { sessionStorage.setItem('passcode', pass); setUnlocked(true); }
+      else { setPass(pass); setUnlocked(true); }
     } catch { setErr('Can’t reach the server. It may be waking up, so try again in a few seconds.'); }
     setBusy(false);
   }
