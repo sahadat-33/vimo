@@ -22,7 +22,12 @@ function useLayout(): Layout {
   const [l, setL] = useState<Layout>('portrait');
   useEffect(() => {
     const f = () => setL(innerWidth >= 1024 ? 'desktop' : innerWidth > innerHeight ? 'landscape' : 'portrait');
-    f(); addEventListener('resize', f); return () => removeEventListener('resize', f);
+    const later = () => { f(); setTimeout(f, 150); setTimeout(f, 450); }; // Android reports the new size a moment after rotating
+    f(); addEventListener('resize', f); addEventListener('orientationchange', later);
+    const mq = matchMedia('(orientation: landscape)'); mq.addEventListener?.('change', later);
+    const so = (screen as Screen & { orientation?: EventTarget }).orientation; so?.addEventListener('change', later);
+    window.visualViewport?.addEventListener('resize', f);
+    return () => { removeEventListener('resize', f); removeEventListener('orientationchange', later); mq.removeEventListener?.('change', later); so?.removeEventListener('change', later); window.visualViewport?.removeEventListener('resize', f); };
   }, []);
   return l;
 }
