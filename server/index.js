@@ -6,7 +6,7 @@ const { Server } = require('socket.io');
 const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
 const sha = (x) => crypto.createHash('sha256').update(x).digest();
 const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
-const origin = process.env.CLIENT_ORIGIN || '*';
+const origin = (process.env.CLIENT_ORIGIN || '').replace(/\/+$/, '') || '*'; // tolerate a trailing slash in the env var
 const MAX = 10, MAX_ROOMS = 200, GRACE_MS = 15000, MAX_QUEUE = 50;
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
@@ -31,17 +31,45 @@ app.use((_q, s, n) => { s.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-P
 app.use(cors({ origin })); app.use(express.json({ limit: '10kb' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin }, maxHttpBufferSize: 20000,
-  allowRequest: (req, cb) => cb(null, !process.env.CLIENT_ORIGIN || !req.headers.origin || req.headers.origin === process.env.CLIENT_ORIGIN) });
+  allowRequest: (req, cb) => cb(null, origin === '*' || !req.headers.origin || req.headers.origin === origin) });
+
+
+/* ---------- shared video storage (any S3-compatible bucket, e.g. Cloudflare R2). Presigned URLs only, no SDK. ---------- */
+const S3 = { endpoint: (process.env.S3_ENDPOINT || '').replace(/\/+$/, ''), region: process.env.S3_REGION || 'auto', bucket: process.env.S3_BUCKET || '',
+  id: process.env.S3_ACCESS_KEY_ID || '', secret: process.env.S3_SECRET_ACCESS_KEY || '', vhost: false };
+const MAX_UPLOAD = Math.max(10, Number(process.env.MAX_UPLOAD_MB) || 2048) * 1048576;
+const s3On = () => !!(S3.endpoint && S3.bucket && S3.id && S3.secret);
+const hmac = (k, d) => crypto.createHmac('sha256', k).update(d).digest();
+const awsEnc = (x) => encodeURIComponent(x).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+function presign(method, key, expires, now = new Date(), c = S3) { // AWS Signature V4, query-string form, unsigned payload
+  const u = new URL(c.endpoint), host = c.vhost ? `${c.bucket}.${u.host}` : u.host;
+  const path = (c.vhost ? '' : `/${c.bucket}`) + '/' + key, uri = path.split('/').map(awsEnc).join('/');
+  const amz = now.toISOString().replace(/[:-]|\.\d{3}/g, ''), day = amz.slice(0, 8), scope = `${day}/${c.region}/s3/aws4_request`;
+  const q = { 'X-Amz-Algorithm': 'AWS4-HMAC-SHA256', 'X-Amz-Credential': `${c.id}/${scope}`, 'X-Amz-Date': amz, 'X-Amz-Expires': String(expires), 'X-Amz-SignedHeaders': 'host' };
+  const cq = Object.keys(q).sort().map((k) => `${awsEnc(k)}=${awsEnc(q[k])}`).join('&');
+  const creq = `${method}\n${uri}\n${cq}\nhost:${host}\n\nhost\nUNSIGNED-PAYLOAD`;
+  const sts = `AWS4-HMAC-SHA256\n${amz}\n${scope}\n${crypto.createHash('sha256').update(creq).digest('hex')}`;
+  const sig = hmac(hmac(hmac(hmac(hmac('AWS4' + c.secret, day), c.region), 's3'), 'aws4_request'), sts).toString('hex');
+  return `${u.protocol}//${host}${uri}?${cq}&X-Amz-Signature=${sig}`;
+}
+const s3Head = async (key) => { const res = await fetch(presign('HEAD', key, 300), { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+  return res.ok ? Number(res.headers.get('content-length')) : -1; };
+const s3Delete = (key) => s3On() && fetch(presign('DELETE', key, 300), { method: 'DELETE', signal: AbortSignal.timeout(10000) }).catch(() => {});
+const dropFile = (r) => { if (r.file) s3Delete(r.file.key); r.file = null; };
+const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r.file.type, by: r.file.by, url: presign('GET', r.file.key, 12 * 3600) };
 
 /* ---------- room state. Keep in sync with client/src/lib/types.ts ---------- */
 const rooms = new Map();
 const room = (id) => {
   if (!rooms.has(id)) rooms.set(id, { id, mode: 'youtube', queue: [], current: null, playback: { playing: false, time: 0, rate: 1 },
-    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [] });
+    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [], file: null, pending: new Map(), pbAt: Date.now() });
   return rooms.get(id);
 };
 const pubMember = (m) => ({ id: m.id, name: m.name, avatar: m.avatar, color: m.color });
-const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: r.playback, chat: r.chat.slice(-100),
+const setPb = (r, p) => { r.playback = p; r.pbAt = Date.now(); };
+// A joiner must start where the room is NOW, not where it was at the last play/pause event.
+const livePb = (r) => { const p = r.playback; return p.playing ? { ...p, time: clamp(p.time + ((Date.now() - r.pbAt) / 1000) * p.rate, 0, 172800, 0) } : p; };
+const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), file: pubFile(r), chat: r.chat.slice(-100),
   hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember) }); // never include adminToken
 const who = (r, pid) => (r.members.find((m) => m.id === pid) || {}).name || 'Someone';
 const sys = (r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
@@ -65,7 +93,7 @@ function removeMember(r, me) {
   clearTimeout(me.dropTimer); r.members = r.members.filter((m) => m !== me);
   io.to(r.id).emit('peer:left', me.id); sys(r, `${me.name} left`);
   if (r.controller === me.id) setController(r, null);
-  if (!r.members.length) setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length) { stopHb(x); rooms.delete(x.id); } }, 60000);
+  if (!r.members.length) setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length) { stopHb(x); dropFile(x); rooms.delete(x.id); } }, 60000);
 }
 
 /* ---------- REST ---------- */
@@ -105,7 +133,8 @@ io.use((sock, next) => {
 });
 
 const LIMITS = { 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
-  'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000] };
+  'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
+  'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
   const t = (b[ev] = (b[ev] || []).filter((x) => now - x < lim[1])); if (t.length >= lim[0]) return false; t.push(now); return true; };
 
@@ -154,14 +183,14 @@ io.on('connection', (sock) => {
   on('room:leave', (r, me) => { removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
   on('mode:set', (r, me, _cb, mode) => {
     if (!MODES.includes(mode) || mode === r.mode) return;
-    r.mode = mode; r.playback = { playing: false, time: 0, rate: 1 }; sys(r, `${me.name} switched to ${mode} mode`);
+    r.mode = mode; setPb(r, { playing: false, time: 0, rate: 1 }); sys(r, `${me.name} switched to ${mode} mode`);
     io.to(r.id).emit('mode:changed', { mode, playback: r.playback });
   });
   on('playback', (r, me, _cb, p) => {
     if (!p || typeof p !== 'object') return;
     const next = { playing: p.playing === true, time: clamp(p.time, 0, 172800, 0), rate: clamp(p.rate, 0.25, 2, 1) };
     if (r.playback.playing !== next.playing) sys(r, `${me.name} ${next.playing ? 'played' : 'paused'} the video`);
-    r.playback = next; sock.to(r.id).emit('playback', { ...next, from: me.id });
+    setPb(r, next); sock.to(r.id).emit('playback', { ...next, from: me.id });
   });
   on('queue:add', (r, me, cb, item) => {
     if (!item || typeof item.id !== 'string' || !YT_RE.test(item.id)) return;
@@ -177,9 +206,47 @@ io.on('connection', (sock) => {
   });
   on('video:change', (r, _me, _cb, item) => {
     const v = item && typeof item.id === 'string' && r.queue.find((q) => q.id === item.id); // only items that are really queued
-    if (!v) return; r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); r.playback = { playing: true, time: 0, rate: 1 };
-    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current }); io.to(r.id).emit('playback', { ...r.playback, from: 'server' });
+    if (!v) return; r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); setPb(r, { playing: true, time: 0, rate: 1 });
+    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback }); // one event, so clients never see a new video with the old time
   });
+  on('video:ended', (r, _me, _cb, id) => { // any client may report it; only the first report for the current video advances the queue
+    if (typeof id !== 'string' || !r.current || r.current.id !== id) return;
+    r.current = r.queue.shift() || null; setPb(r, { playing: !!r.current, time: 0, rate: 1 });
+    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback });
+  });
+
+  /* shared local video: one person uploads straight to the bucket, everyone plays the same file */
+  on('file:prepare', (r, me, cb, meta) => {
+    if (!cb) return;
+    if (!s3On()) return cb({ error: 'not_configured' });
+    const size = Number(meta && meta.size), type = clean(meta && meta.type, 60).toLowerCase();
+    if (!Number.isInteger(size) || size < 1) return cb({ error: 'That file looks empty.' });
+    if (size > MAX_UPLOAD) return cb({ error: `That file is too large. The limit is ${Math.round(MAX_UPLOAD / 1048576)} MB.` });
+    if (!/^video\/[a-z0-9.+-]{1,40}$/.test(type)) return cb({ error: 'Please choose a video file.' });
+    const ext = (clean(meta.name, 120).match(/\.([A-Za-z0-9]{1,5})$/) || [])[1] || 'mp4';
+    const key = `rooms/${r.id}/${uid()}.${ext.toLowerCase()}`;
+    for (const [k, v] of r.pending) if (Date.now() - v.at > 8 * 3600000) r.pending.delete(k);
+    r.pending.set(key, { pid: me.id, name: clean(meta.name, 120) || 'video', type, size, at: Date.now() });
+    cb({ uploadUrl: presign('PUT', key, 6 * 3600), key, maxBytes: MAX_UPLOAD });
+  });
+  on('file:progress', (r, me, _cb, pct) => { sock.to(r.id).emit('file:uploading', { by: me.id, name: me.name, pct: clamp(pct, -1, 100, -1) }); });
+  on('file:ready', async (r, me, cb, key) => {
+    const p = typeof key === 'string' && r.pending.get(key);
+    if (!p || p.pid !== me.id) return cb && cb({ error: 'Unknown upload.' });
+    const len = await s3Head(key); // prove the object is really in the bucket before telling everyone it is ready
+    if (len < 1 || len > MAX_UPLOAD) { s3Delete(key); r.pending.delete(key); return cb && cb({ error: 'The upload did not finish. Please try again.' }); }
+    r.pending.delete(key); dropFile(r);
+    r.file = { key, name: p.name, size: len, type: p.type, by: me.name, byId: me.id }; setPb(r, { playing: false, time: 0, rate: 1 });
+    sys(r, `${me.name} shared “${p.name.slice(0, 60)}”`);
+    io.to(r.id).emit('file:updated', { file: pubFile(r), playback: r.playback });
+    if (cb) cb({ ok: true });
+  });
+  on('file:remove', (r, me) => {
+    if (!r.file || (r.file.byId !== me.id && r.members[0].id !== me.id)) return; // uploader or host
+    dropFile(r); setPb(r, { playing: false, time: 0, rate: 1 });
+    io.to(r.id).emit('file:updated', { file: null, playback: r.playback });
+  });
+  on('file:refresh', (_r, _me, cb) => { if (cb) cb({ file: pubFile(_r) }); }); // fresh presigned URL if the old one expired
   on('chat:send', (r, me, _cb, text) => {
     const t = clean(text, 500); if (!t) return;
     const m = { id: uid(), from: me.id, name: me.name, avatar: me.avatar, color: me.color, text: t, at: Date.now() };
