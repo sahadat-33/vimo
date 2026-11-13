@@ -1,16 +1,20 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Youtube, FileVideo, Globe, Copy, MessageCircle, X } from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { Youtube, FileVideo, Globe, Maximize2 } from 'lucide-react';
 import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
 import { getPass } from '@/lib/types';
+import { useCall } from '@/lib/useCall';
 import StageYouTube from '@/components/StageYouTube';
 import StageLocalFile from '@/components/StageLocalFile';
 import StageBrowser from '@/components/StageBrowser';
-import VideoCallBar from '@/components/VideoCallBar';
+import { CallAudio, FeedGrid, FloatingFeeds } from '@/components/VideoCallBar';
 import ChatAndQueue from '@/components/ChatAndQueue';
 import JoinGate from '@/components/JoinGate';
+import RoomControls from '@/components/RoomControls';
+import RoomPanel, { type PanelTab } from '@/components/RoomPanel';
+import { Skeleton, StatusPill, cx } from '@/components/ui';
 
 type Layout = 'desktop' | 'portrait' | 'landscape';
 function useLayout(): Layout {
@@ -31,51 +35,86 @@ export default function Room() {
     try { const p = localStorage.getItem('profile'); if (p) setProfile(JSON.parse(p)); } catch {}
     setHasPass(!!getPass()); setReady(true);
   }, []);
-  if (!ready) return null;
+  if (!ready) return <RoomSkeleton />;
   if (!profile || !hasPass) return <JoinGate needPass={!hasPass} initial={profile} onDone={(p) => { setProfile(p); setHasPass(true); }} />;
   return <RoomInner roomId={roomId} profile={profile} />;
 }
 
+function RoomSkeleton() {
+  return <div className="bg-cinema flex h-[100dvh] flex-col gap-3 p-3" role="status" aria-label="Joining room">
+    <Skeleton className="h-10 w-2/3" /><Skeleton className="min-h-0 flex-1" /><Skeleton className="h-14" /></div>;
+}
+
 function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
-  const layout = useLayout();
   const [socket, setSocket] = useState<AppSocket | null>(null);
-  const [selfId, setSelfId] = useState(''), [isHost, setIsHost] = useState(false);
+  const [selfId, setSelfId] = useState(''), [isHost, setIsHost] = useState(false), [online, setOnline] = useState(true);
   const [state, setState] = useState<RoomState | null>(null);
   const [pb, setPb] = useState<LocalPlayback>({ playing: false, time: 0, rate: 1, at: Date.now() });
-  const [err, setErr] = useState(''), [smartMic, setSmartMic] = useState(true);
-  const [touched, setTouched] = useState(false);
-  const [drawer, setDrawer] = useState(false), [unread, setUnread] = useState(0);
-  const [floaters, setFloaters] = useState<{ id: string; emoji: string; x: number }[]>([]);
-  const drawerRef = useRef(drawer); drawerRef.current = drawer;
+  const [err, setErr] = useState('');
 
   useEffect(() => {
-    const s = getSocket(); setSocket(s);
+    const s = getSocket(); setSocket(s); setOnline(s.connected);
     const join = () => s.emit('room:join', roomId, profile, (r) => {
       if (r.error || !r.state) return setErr(r.error || 'Could not join');
-      setSelfId(r.selfId!); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
+      const wanted = new URLSearchParams(location.search).get('mode');
+      if (wanted && ['youtube', 'file', 'browser'].includes(wanted) && r.state.members.length <= 1 && r.state.mode !== wanted) s.emit('mode:set', wanted as Mode);
+      setErr(''); setSelfId(r.selfId!); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
     });
-    s.on('connect', join); if (s.connected) join();
-    s.on('connect_error', () => setErr('Can’t reach the server. It may be waking up. Retrying…'));
+    s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
+    if (s.connected) join();
+    s.on('connect_error', () => setOnline(false));
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
     s.on('playback', (p) => setPb({ playing: p.playing, time: p.time, rate: p.rate, at: Date.now() }));
     s.on('queue:updated', (q) => setState((x) => x && { ...x, ...q }));
     s.on('peer:joined', (m: Member) => setState((x) => x && { ...x, members: [...x.members.filter((y) => y.id !== m.id), m] }));
     s.on('peer:left', (id) => setState((x) => x && { ...x, members: x.members.filter((y) => y.id !== id) }));
-    s.on('chat:message', (m) => { if (!m.system && !drawerRef.current) setUnread((n) => n + 1); });
-    s.on('reaction', (r) => {
-      setFloaters((f) => [...f, { id: r.id, emoji: r.emoji, x: 10 + Math.random() * 80 }]);
-      setTimeout(() => setFloaters((f) => f.filter((y) => y.id !== r.id)), 3000);
-    });
-    return () => { ['connect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'peer:joined', 'peer:left', 'chat:message', 'reaction']
+    s.on('chat:message', (m) => setState((x) => x && { ...x, chat: [...x.chat, m] }));
+    s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
+    s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
+    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
   const emitPlayback = useCallback((p: Playback) => { setPb({ ...p, at: Date.now() }); socket?.emit('playback', p); }, [socket]);
 
-  if (err) return <p role="alert" className="p-6 text-ember">{err}</p>;
-  if (!socket || !state) return <p className="p-6 text-cream/70">Joining room…</p>;
+  if (err) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><p role="alert" className="text-accent">{err}</p></div>;
+  if (!socket || !state) return <RoomSkeleton />;
+  return <RoomView {...{ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }} />;
+}
 
-  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback };
+function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
+  roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
+  const router = useRouter(); const layout = useLayout();
+  const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false);
+  const [open, setOpen] = useState(true), [tab, setTab] = useState<PanelTab>('chat'), [unread, setUnread] = useState(0);
+  const [floaters, setFloaters] = useState<{ id: string; emoji: string; x: number }[]>([]);
+  const [sync, setSync] = useState<'synced' | 'resyncing' | 'unknown'>('unknown'); const lastReport = useRef(0);
+  const call = useCall({ roomId, userName: profile.name, sid: selfId, playing: pb.playing, smartMic });
+
+  useEffect(() => { setOpen(layout !== 'landscape'); }, [layout]);
+  const chatVisible = useRef(false); chatVisible.current = open && tab === 'chat';
+  useEffect(() => { if (open && tab === 'chat') setUnread(0); }, [open, tab]);
+  useEffect(() => {
+    const onMsg = (m: { system?: boolean; from: string }) => { if (!m.system && m.from !== selfId && !chatVisible.current) setUnread((n) => n + 1); };
+    const onReact = (r: { id: string; emoji: string }) => {
+      setFloaters((f) => [...f.slice(-20), { id: r.id, emoji: r.emoji, x: 10 + Math.random() * 80 }]);
+      setTimeout(() => setFloaters((f) => f.filter((y) => y.id !== r.id)), 3000);
+    };
+    socket.on('chat:message', onMsg); socket.on('reaction', onReact);
+    return () => { socket.off('chat:message', onMsg); socket.off('reaction', onReact); };
+  }, [socket, selfId]);
+
+  // Sync status is only "synced" when a stage has measured real drift within the last 6 seconds.
+  const onDrift = useCallback((d: number) => { lastReport.current = Date.now(); setSync(d <= 0.8 ? 'synced' : 'resyncing'); }, []);
+  useEffect(() => { const t = setInterval(() => { if (Date.now() - lastReport.current > 6000) setSync('unknown'); }, 2000); return () => clearInterval(t); }, []);
+  useEffect(() => { lastReport.current = 0; setSync('unknown'); }, [state.mode]);
+
+  const toggleTab = (t: 'people' | 'chat') => { if (open && tab === t) setOpen(false); else { setTab(t); setOpen(true); } };
+  const invite = async () => { try { await navigator.clipboard.writeText(`${location.origin}/room/${roomId}`); return true; } catch { return false; } };
+  const leave = () => { socket.disconnect(); router.push('/'); };
+  const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
+
+  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback, onDrift };
   const next = state.queue[0];
   const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} onEnded={() => { if (isHost && next) socket.emit('video:change', next); }} />
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} initial={state.hb} controller={state.controller} />;
@@ -84,43 +123,63 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
       {stageInner}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
+      {typeof document !== 'undefined' && document.fullscreenEnabled &&
+        <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className="absolute right-2 top-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-70 transition hover:opacity-100"><Maximize2 size={16} /></button>}
       {!touched && pb.playing && state.mode !== 'browser' && layout !== 'desktop' &&
-        <button onClick={() => { setTouched(true); setPb((p) => ({ ...p, at: Date.now() })); }}
-          className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
-          <span className="rounded-full bg-blush px-5 py-3 text-night">Tap to sync &amp; unmute</span></button>}
+        <button onClick={() => { setTouched(true); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
+          <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
-  const call = <VideoCallBar userName={profile.name} roomId={roomId} layout={layout} playing={pb.playing} smartMic={smartMic} setSmartMic={setSmartMic} />;
-  const switcher = (
-    <nav className="flex items-center gap-1 p-2" aria-label="Watch mode">
-      {MODES.map(({ id, label, Icon }) => (
-        <button key={id} onClick={() => socket.emit('mode:set', id)} aria-pressed={state.mode === id}
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ${state.mode === id ? 'bg-blush text-night' : 'bg-dusk text-cream/80'}`}>
-          <Icon size={16} /> {label}
-        </button>))}
-      <button onClick={() => navigator.clipboard?.writeText(`${location.origin}/room/${roomId}`)} className="ml-auto flex items-center gap-1 rounded-full bg-dusk px-3 py-1.5 text-xs text-cream/80" aria-label="Copy invite link">
-        <Copy size={14} /> Invite · {state.members.length}/10</button>
-    </nav>
-  );
-  const side = <ChatAndQueue socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} />;
 
-  if (layout === 'landscape') return (
-    <div className="fixed inset-0 h-[100dvh] w-screen bg-black">
+  const netChip = call.state === 'error' ? { ok: false as boolean | null, t: 'Call: unavailable' }
+    : call.state === 'joining' ? { ok: null, t: 'Call: connecting' }
+    : call.net === 'good' ? { ok: true, t: 'Network: good' } : call.net === 'low' ? { ok: false, t: 'Network: weak' }
+    : call.net === 'very-low' ? { ok: false, t: 'Network: poor' } : { ok: null, t: 'Network: measuring' };
+  const syncChip = state.mode === 'browser' ? { ok: null as boolean | null, t: 'Sync: n/a (shared browser)' }
+    : sync === 'synced' ? { ok: true, t: 'Sync: in sync' } : sync === 'resyncing' ? { ok: false, t: 'Sync: resyncing' } : { ok: null, t: 'Sync: waiting for player' };
+  const topBar = (
+    <div className="flex flex-wrap items-center gap-2 p-2">
+      <nav className="flex gap-1" aria-label="Watch mode">
+        {MODES.map(({ id, label, Icon }) => (
+          <button key={id} onClick={() => socket.emit('mode:set', id)} aria-pressed={state.mode === id}
+            className={cx('flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-sm font-semibold transition', state.mode === id ? 'bg-primary text-white' : 'bg-surface2 text-muted hover:text-ink')}>
+            <Icon size={16} /> {label}</button>))}</nav>
+      <div className="ml-auto flex flex-wrap gap-1.5" aria-label="Connection status">
+        <StatusPill online={online} label={online ? 'Server: connected' : 'Server: reconnecting'} />
+        <StatusPill online={netChip.ok} label={netChip.t} /><StatusPill online={syncChip.ok} label={syncChip.t} /></div></div>);
+  const controls = (compact?: boolean) => (
+    <RoomControls compact={compact} mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
+      panelOpen={open} panelTab={tab} onToggleTab={toggleTab} unread={unread} onReact={(e) => socket.emit('reaction', e)} onInvite={invite}
+      smartMic={smartMic} setSmartMic={setSmartMic} onLeave={leave} />);
+  const panel = (showPeople: boolean) => (
+    <RoomPanel tab={tab} onTab={setTab} unread={unread} queueCount={state.queue.length} peopleCount={state.members.length}
+      people={showPeople ? <FeedGrid members={state.members} parts={call.parts} selfId={selfId} callState={call.state} /> : null}
+      chat={<ChatAndQueue view={tab === 'queue' ? 'queue' : 'chat'} socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} />} />);
+  const banner = !online && <p role="status" className="bg-accent px-3 py-1 text-center text-sm font-medium text-bg">Reconnecting to the server…</p>;
+  const callErr = call.error && <p role="alert" className="px-3 text-xs text-accent">{call.error}</p>;
+
+  let body: React.ReactNode;
+  if (layout === 'landscape') body = (
+    <div className="fixed inset-0 h-[100dvh] w-screen overflow-hidden bg-black">
       <div className="absolute inset-0">{stage}</div>
-      <div className="absolute left-0 top-0 z-30 opacity-70 hover:opacity-100">{switcher}</div>
-      {call}
-      <button onClick={() => { setDrawer(true); setUnread(0); }} aria-label="Open chat" className="fixed bottom-2 right-2 z-40 rounded-full bg-black/70 p-3">
-        <MessageCircle size={20} />{unread > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-ember px-1.5 text-xs text-night">{unread}</span>}</button>
-      <aside className={`fixed right-0 top-0 z-50 h-[100dvh] w-[320px] max-w-[85vw] bg-night/85 backdrop-blur transition-transform ${drawer ? '' : 'translate-x-full'}`} aria-hidden={!drawer}>
-        <button onClick={() => setDrawer(false)} aria-label="Close chat" className="absolute right-2 top-2 z-10 rounded-full bg-plum p-1"><X size={16} /></button>
-        <div className="h-full pt-8">{side}</div></aside>
+      <div className="absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent">{topBar}{banner}</div>
+      <FloatingFeeds members={state.members} parts={call.parts} selfId={selfId} callState={call.state} />
+      <div className="absolute bottom-2 left-1/2 z-40 -translate-x-1/2">{controls(true)}</div>
+      <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
+        className={cx('fixed right-0 top-0 z-50 h-[100dvh] w-[340px] max-w-[88vw] border-l border-white/10 bg-bg/90 backdrop-blur transition-transform duration-300', open ? 'translate-x-0' : 'translate-x-full')}>
+        {panel(open)}</aside>
     </div>);
-  if (layout === 'desktop') return (
-    <div className="grid h-[100dvh] grid-cols-[1fr_340px] grid-rows-[auto_1fr]">
-      <div>{switcher}</div><div className="row-span-2 flex min-h-0 flex-col border-l border-plum">{call}<div className="min-h-0 flex-1">{side}</div></div>
-      <div className="min-h-0 px-2 pb-2"><div className="h-full overflow-hidden rounded-2xl bg-black">{stage}</div></div>
-    </div>);
-  return (
-    <div className="flex h-[100dvh] flex-col">
-      {switcher}<div className="aspect-video w-full shrink-0 bg-black">{stage}</div>{call}<div className="min-h-0 flex-1">{side}</div>
-    </div>);
+  else if (layout === 'desktop') body = (
+    <div className="bg-cinema flex h-[100dvh] flex-col">{banner}{topBar}{callErr}
+      <div className="grid min-h-0 flex-1 transition-[grid-template-columns] duration-300 ease-out"
+        style={{ gridTemplateColumns: open ? 'minmax(0,7fr) minmax(0,3fr)' : 'minmax(0,1fr) minmax(0,0fr)' }}>
+        <div className="flex min-h-0 min-w-0 flex-col gap-2 px-2 pb-2">
+          <div className="min-h-0 flex-1 overflow-hidden rounded-card bg-black shadow-card">{stage}</div>{controls()}</div>
+        <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)} className="min-w-0 overflow-hidden border-l border-white/5">{panel(true)}</aside></div></div>);
+  else body = (
+    <div className="bg-cinema flex h-[100dvh] flex-col overflow-hidden">{banner}{topBar}
+      <div className="aspect-video w-full shrink-0 bg-black">{stage}</div>
+      <div className="px-2 pt-3">{controls()}</div>{callErr}
+      <div aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
+        className={cx('min-h-0 overflow-hidden transition-opacity duration-300', open ? 'mt-2 flex-1 opacity-100' : 'h-0 flex-none opacity-0')}>{panel(true)}</div></div>);
+  return <><CallAudio parts={call.parts} />{body}</>;
 }
