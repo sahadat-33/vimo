@@ -1,116 +1,222 @@
 require('dotenv').config();
-const express = require('express'), http = require('http'), cors = require('cors');
+const express = require('express'), http = require('http'), cors = require('cors'), crypto = require('crypto');
 const { Server } = require('socket.io');
-const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
-const crypto = require('crypto');
-const sha = (x) => crypto.createHash('sha256').update(x).digest();
-const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE)); // constant-time check
-const origin = process.env.CLIENT_ORIGIN || '*';
-const app = express();
-app.use(cors({ origin })); app.use(express.json());
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin } });
 
-/** roomId -> state. Keep in sync with client/src/lib/types.ts */
-const MAX = 10;
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const who = (r, sid) => (r.members.find((m) => m.id === sid) || {}).name || 'Someone';
-const sys = (id, r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
-  r.chat.push(m); io.to(id).emit('chat:message', m); };
+/* ---------- config & helpers ---------- */
+const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
+const sha = (x) => crypto.createHash('sha256').update(x).digest();
+const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
+const origin = process.env.CLIENT_ORIGIN || '*';
+const MAX = 10, MAX_ROOMS = 200, GRACE_MS = 15000, MAX_QUEUE = 50;
+const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const MODES = ['youtube', 'file', 'browser'];
+const norm = (e) => String(e).replace(/\uFE0F/g, '');
+const EMOJI = new Set(['\u2764\uFE0F', '\u{1F602}', '\u{1F631}', '\u{1F525}', '\u{1F62D}', '\u{1F37F}'].map(norm));
+const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, n);
+const clamp = (v, lo, hi, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+const uid = () => crypto.randomBytes(6).toString('hex');
+const pidOf = (cid) => crypto.createHash('sha256').update('cc:' + cid).digest('hex').slice(0, 12); // public id; the cid stays secret
+
+/* ---------- abuse control (per IP) ---------- */
+const fails = new Map(), hits = new Map();
+const recent = (m, ip, win) => { const now = Date.now(); const t = (m.get(ip) || []).filter((x) => now - x < win); m.set(ip, t); return t; };
+const blocked = (ip) => recent(fails, ip, 600000).length >= 10;
+const noteFail = (ip) => recent(fails, ip, 600000).push(Date.now());
+setInterval(() => { const now = Date.now(); for (const m of [fails, hits]) for (const [k, v] of m) if (!v.some((x) => now - x < 600000)) m.delete(k); }, 600000).unref();
+const ipOf = (h) => String((h.headers['x-forwarded-for'] || h.address || '')).split(',')[0].trim();
+
+const app = express();
+app.disable('x-powered-by'); app.set('trust proxy', 1);
+app.use((_q, s, n) => { s.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); n(); });
+app.use(cors({ origin })); app.use(express.json({ limit: '10kb' }));
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin }, maxHttpBufferSize: 20000,
+  allowRequest: (req, cb) => cb(null, !process.env.CLIENT_ORIGIN || !req.headers.origin || req.headers.origin === process.env.CLIENT_ORIGIN) });
+
+/* ---------- room state. Keep in sync with client/src/lib/types.ts ---------- */
 const rooms = new Map();
 const room = (id) => {
-  if (!rooms.has(id)) rooms.set(id, { mode: 'youtube', queue: [], current: null,
-    playback: { playing: false, time: 0, rate: 1 }, chat: [], hb: null, daily: null, controller: null, members: [] });
+  if (!rooms.has(id)) rooms.set(id, { id, mode: 'youtube', queue: [], current: null, playback: { playing: false, time: 0, rate: 1 },
+    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [] });
   return rooms.get(id);
 };
-const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: r.playback,
-  chat: r.chat.slice(-100), hb: r.hb && { embedUrl: r.hb.embedUrl, adminToken: r.hb.adminToken }, controller: r.controller, members: r.members });
+const pubMember = (m) => ({ id: m.id, name: m.name, avatar: m.avatar, color: m.color });
+const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: r.playback, chat: r.chat.slice(-100),
+  hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember) }); // never include adminToken
+const who = (r, pid) => (r.members.find((m) => m.id === pid) || {}).name || 'Someone';
+const sys = (r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
+  r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m); };
+const sidOf = (r, pid) => { const m = r.members.find((x) => x.id === pid); return m && m.sid; };
 
+/* Hyperbeam control: the admin token only ever goes to the current controller's socket. */
+function setController(r, pid) {
+  const prev = r.controller; r.controller = pid;
+  io.to(r.id).emit('browser:controller', pid);
+  if (prev && prev !== pid && sidOf(r, prev)) io.to(sidOf(r, prev)).emit('hb:admin', { adminToken: null });
+  if (pid && r.hb && sidOf(r, pid)) io.to(sidOf(r, pid)).emit('hb:admin', { adminToken: r.hb.adminToken });
+}
+async function stopHb(r) {
+  if (!r.hb) return; const sid = r.hb.sessionId; r.hb = null; setController(r, null);
+  io.to(r.id).emit('hb:stopped');
+  await fetch(`https://engine.hyperbeam.com/v0/vm/${encodeURIComponent(sid)}`, { method: 'DELETE',
+    headers: { Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` }, signal: AbortSignal.timeout(10000) }).catch(() => {});
+}
+function removeMember(r, me) {
+  clearTimeout(me.dropTimer); r.members = r.members.filter((m) => m !== me);
+  io.to(r.id).emit('peer:left', me.id); sys(r, `${me.name} left`);
+  if (r.controller === me.id) setController(r, null);
+  if (!r.members.length) setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length) { stopHb(x); rooms.delete(x.id); } }, 60000);
+}
+
+/* ---------- REST ---------- */
 app.get('/health', (_q, s) => s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0) }));
-app.set('trust proxy', 1);
-const tries = new Map(); // ip -> failed-attempt timestamps (10 per 10 min)
+app.use('/api', (q, s, n) => { const t = recent(hits, q.ip, 60000); if (t.length >= 60) return s.status(429).json({ error: 'rate_limited' }); t.push(Date.now()); n(); });
 app.post('/api/auth', (q, s) => {
-  const now = Date.now(), t = (tries.get(q.ip) || []).filter((x) => now - x < 600000);
-  if (t.length >= 10) return s.status(429).json({ ok: false, error: 'too_many' });
+  if (blocked(q.ip)) return s.status(429).json({ ok: false, error: 'too_many' });
   if (ok(q.body && q.body.passcode)) return s.json({ ok: true });
-  t.push(now); tries.set(q.ip, t); s.status(401).json({ ok: false });
+  noteFail(q.ip); s.status(401).json({ ok: false });
 });
-const guard = (q, s, n) => (ok(q.get('x-passcode')) ? n() : s.status(401).json({ error: 'bad passcode' }));
-
+const guard = (q, s, n) => {
+  if (blocked(q.ip)) return s.status(429).json({ error: 'too_many' });
+  if (ok(q.get('x-passcode'))) return n(); noteFail(q.ip); s.status(401).json({ error: 'bad passcode' });
+};
 app.post('/api/daily/:roomId', guard, async (q, s) => {
+  const r = ROOM_RE.test(q.params.roomId) ? rooms.get(q.params.roomId) : null;
+  if (!r || !r.members.length) return s.status(404).json({ error: 'no_room' });
+  if (!process.env.DAILY_API_KEY) return s.status(503).json({ error: 'not_configured' });
   try {
-    const r = room(q.params.roomId);
-    if (!r.daily) {
-      const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST',
+    if (!r.daily || Date.now() - r.dailyAt > 5.5 * 3600000) {
+      const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST', signal: AbortSignal.timeout(10000),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DAILY_API_KEY}` },
-        body: JSON.stringify({ properties: { max_participants: 10, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
-      if (!res.ok) throw new Error(await res.text());
-      r.daily = (await res.json()).url;
+        body: JSON.stringify({ properties: { max_participants: MAX, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
+      if (!res.ok) throw new Error(`daily ${res.status}`);
+      r.daily = (await res.json()).url; r.dailyAt = Date.now();
     }
     s.json({ url: r.daily });
-  } catch (e) { s.status(500).json({ error: String(e.message || e) }); }
+  } catch (e) { console.error('daily error:', e.message); s.status(502).json({ error: 'daily_failed' }); }
 });
 
-app.post('/api/hyperbeam/start', guard, async (q, s) => {
-  try {
-    const id = q.body.roomId, r = room(id);
-    if (!r.hb) {
-      const res = await fetch('https://engine.hyperbeam.com/v0/vm', { method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` },
-        body: JSON.stringify({ profile: { save: true, load: process.env.HYPERBEAM_PROFILE || 'couple_default_profile' } }) });
-      if (!res.ok) throw new Error(await res.text());
-      const d = await res.json();
-      r.hb = { sessionId: d.session_id, embedUrl: d.embed_url, adminToken: d.admin_token };
-    }
-    const out = { embedUrl: r.hb.embedUrl, adminToken: r.hb.adminToken };
-    io.to(id).emit('hb:started', out); s.json(out);
-  } catch (e) { s.status(500).json({ error: String(e.message || e) }); }
+/* ---------- sockets ---------- */
+io.use((sock, next) => {
+  const ip = ipOf(sock.handshake);
+  if (blocked(ip)) return next(new Error('too_many'));
+  if (ok(sock.handshake.auth && sock.handshake.auth.passcode)) return next();
+  noteFail(ip); next(new Error('bad passcode'));
 });
 
-async function stopHb(id) {
-  const r = room(id); if (!r.hb) return;
-  const sid = r.hb.sessionId; r.hb = null; r.controller = null;
-  await fetch(`https://engine.hyperbeam.com/v0/vm/${sid}`, { method: 'DELETE',
-    headers: { Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` } }).catch(() => {});
-  io.to(id).emit('hb:stopped');
-}
-app.post('/api/hyperbeam/stop', guard, async (q, s) => { await stopHb(q.body.roomId); s.json({ ok: true }); });
+const LIMITS = { 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+  'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000] };
+const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
+  const t = (b[ev] = (b[ev] || []).filter((x) => now - x < lim[1])); if (t.length >= lim[0]) return false; t.push(now); return true; };
 
-io.use((sock, next) => (ok(sock.handshake.auth.passcode) ? next() : next(new Error('bad passcode'))));
 io.on('connection', (sock) => {
-  let id = null;
-  sock.on('room:join', (roomId, profile, cb) => {
-    const r = room(roomId);
-    if (r.members.length >= MAX && !r.members.some((m) => m.id === sock.id)) return cb({ error: 'Room is full (max 10 people)' });
-    id = roomId; sock.join(id);
-    const me = { id: sock.id, name: String((profile && profile.name) || 'Guest').slice(0, 20),
-      avatar: String((profile && profile.avatar) || '🙂').slice(0, 4), color: String((profile && profile.color) || '#f0a3b5').slice(0, 9) };
-    r.members.push(me);
-    cb({ state: pub(r), selfId: sock.id, isHost: r.members[0].id === sock.id });
-    sock.to(id).emit('peer:joined', me); sys(id, r, `${me.name} joined`);
+  // Every event except room:join must come from a socket that is the live connection of a room member.
+  const on = (ev, fn) => sock.on(ev, async (...args) => {
+    const cb = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+    try {
+      if (!allow(sock, ev)) return cb && cb({ error: 'Slow down a little.' });
+      const r = sock.data.roomId && rooms.get(sock.data.roomId);
+      const me = r && r.members.find((m) => m.sid === sock.id);
+      if (!me) return cb && cb({ error: 'Not in a room.' });
+      await fn(r, me, cb, ...args);
+    } catch (e) { console.error(ev, e.message); if (cb) cb({ error: 'Request failed.' }); }
   });
-  const w = (fn) => (...a) => { if (id) fn(room(id), ...a); };
-  sock.on('mode:set', w((r, mode) => { r.mode = mode; sys(id, r, `${who(r, sock.id)} switched to ${mode} mode`); r.playback = { playing: false, time: 0, rate: 1 };
-    io.to(id).emit('mode:changed', { mode, playback: r.playback }); }));
-  sock.on('playback', w((r, p) => { if (r.playback.playing !== !!p.playing) sys(id, r, `${who(r, sock.id)} ${p.playing ? 'played' : 'paused'} the video`); r.playback = { playing: !!p.playing, time: +p.time || 0, rate: +p.rate || 1 };
-    sock.to(id).emit('playback', { ...r.playback, from: sock.id }); }));
-  sock.on('queue:add', w((r, item) => { sys(id, r, `${who(r, sock.id)} added “${String(item.title).slice(0, 60)}”`); r.queue.push(item); if (!r.current) r.current = r.queue.shift();
-    io.to(id).emit('queue:updated', { queue: r.queue, current: r.current }); }));
-  sock.on('queue:remove', w((r, vid) => { r.queue = r.queue.filter((v) => v.id !== vid);
-    io.to(id).emit('queue:updated', { queue: r.queue, current: r.current }); }));
-  sock.on('video:change', w((r, item) => { r.current = item; r.queue = r.queue.filter((v) => v.id !== item.id);
-    r.playback = { playing: true, time: 0, rate: 1 };
-    io.to(id).emit('queue:updated', { queue: r.queue, current: r.current });
-    io.to(id).emit('playback', { ...r.playback, from: sock.id }); }));
-  sock.on('chat:send', w((r, text) => { const me = r.members.find((x) => x.id === sock.id) || {}; const m = { id: uid(), from: sock.id, name: me.name, avatar: me.avatar, color: me.color, text: String(text).slice(0, 500), at: Date.now() };
-    r.chat.push(m); io.to(id).emit('chat:message', m); }));
-  sock.on('reaction', w((_r, emoji) => io.to(id).emit('reaction', { id: uid(), emoji: String(emoji).slice(0, 4), from: sock.id })));
-  sock.on('file:signal', w((_r, data) => sock.to(id).emit('file:signal', data)));
-  sock.on('browser:control', w((r, who) => { r.controller = who; io.to(id).emit('browser:controller', who); }));
+
+  sock.on('room:join', (roomId, profile, cb) => {
+    if (typeof cb !== 'function') return;
+    if (!allow(sock, 'room:join')) return cb({ error: 'Slow down a little.' });
+    if (typeof roomId !== 'string' || !ROOM_RE.test(roomId) || !profile || typeof profile !== 'object' || typeof profile.cid !== 'string' || !CID_RE.test(profile.cid)) return cb({ error: 'Invalid request.' });
+    const prof = { name: clean(profile.name, 20) || 'Guest', avatar: clean(profile.avatar, 8) || '🙂', color: COLOR_RE.test(profile.color) ? profile.color : '#A78BFA' };
+    if (!rooms.has(roomId) && rooms.size >= MAX_ROOMS) return cb({ error: 'The server is busy. Try again later.' });
+    const old = sock.data.roomId && rooms.get(sock.data.roomId);
+    if (old && old.id !== roomId) { const m = old.members.find((x) => x.sid === sock.id); if (m) removeMember(old, m); sock.leave(old.id); }
+    const r = room(roomId), pid = pidOf(profile.cid);
+    let me = r.members.find((m) => m.id === pid), isNew = false;
+    if (me) { clearTimeout(me.dropTimer); me.dropTimer = null; me.sid = sock.id; Object.assign(me, prof); } // idempotent: reconnect or repeated join
+    else {
+      if (r.members.length >= MAX) return cb({ error: 'Room is full (max 10 people).' });
+      me = { id: pid, sid: sock.id, dropTimer: null, ...prof }; r.members.push(me); isNew = true;
+    }
+    sock.data.roomId = roomId; sock.join(roomId);
+    cb({ state: pub(r), selfId: pid, isHost: r.members[0].id === pid });
+    if (r.controller === pid && r.hb) sock.emit('hb:admin', { adminToken: r.hb.adminToken });
+    if (isNew) { sock.to(roomId).emit('peer:joined', pubMember(me)); sys(r, `${me.name} joined`); }
+  });
+
+  on('room:leave', (r, me) => { removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
+  on('mode:set', (r, me, _cb, mode) => {
+    if (!MODES.includes(mode) || mode === r.mode) return;
+    r.mode = mode; r.playback = { playing: false, time: 0, rate: 1 }; sys(r, `${me.name} switched to ${mode} mode`);
+    io.to(r.id).emit('mode:changed', { mode, playback: r.playback });
+  });
+  on('playback', (r, me, _cb, p) => {
+    if (!p || typeof p !== 'object') return;
+    const next = { playing: p.playing === true, time: clamp(p.time, 0, 172800, 0), rate: clamp(p.rate, 0.25, 2, 1) };
+    if (r.playback.playing !== next.playing) sys(r, `${me.name} ${next.playing ? 'played' : 'paused'} the video`);
+    r.playback = next; sock.to(r.id).emit('playback', { ...next, from: me.id });
+  });
+  on('queue:add', (r, me, cb, item) => {
+    if (!item || typeof item.id !== 'string' || !YT_RE.test(item.id)) return;
+    if (r.queue.length >= MAX_QUEUE) return cb && cb({ error: 'The queue is full.' });
+    const v = { id: item.id, title: clean(item.title, 120) || item.id, addedBy: me.id };
+    sys(r, `${me.name} added “${v.title.slice(0, 60)}”`);
+    if (!r.current) r.current = v; else r.queue.push(v);
+    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
+  });
+  on('queue:remove', (r, _me, _cb, id) => {
+    if (typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
+    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
+  });
+  on('video:change', (r, _me, _cb, item) => {
+    const v = item && typeof item.id === 'string' && r.queue.find((q) => q.id === item.id); // only items that are really queued
+    if (!v) return; r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); r.playback = { playing: true, time: 0, rate: 1 };
+    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current }); io.to(r.id).emit('playback', { ...r.playback, from: 'server' });
+  });
+  on('chat:send', (r, me, _cb, text) => {
+    const t = clean(text, 500); if (!t) return;
+    const m = { id: uid(), from: me.id, name: me.name, avatar: me.avatar, color: me.color, text: t, at: Date.now() };
+    r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m);
+  });
+  on('reaction', (r, me, _cb, emoji) => {
+    if (typeof emoji !== 'string' || !EMOJI.has(norm(emoji))) return;
+    io.to(r.id).emit('reaction', { id: uid(), emoji, from: me.id });
+  });
+
+  on('browser:start', async (r, me, cb) => {
+    if (r.hb) { if (!r.controller) setController(r, me.id); return cb && cb({ ok: true }); }
+    if (r.hbStarting) return cb && cb({ error: 'The browser is already starting.' });
+    if (!process.env.HYPERBEAM_API_KEY) return cb && cb({ error: 'The shared browser is not set up on the server.' });
+    r.hbStarting = true;
+    try {
+      const res = await fetch('https://engine.hyperbeam.com/v0/vm', { method: 'POST', signal: AbortSignal.timeout(20000),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` },
+        body: JSON.stringify({ control_disable_default: true, profile: { save: true, load: process.env.HYPERBEAM_PROFILE || 'couple_default_profile' } }) });
+      if (!res.ok) throw new Error(`hyperbeam ${res.status}`);
+      const d = await res.json();
+      if (!d.session_id || !d.embed_url || !d.admin_token) throw new Error('bad hyperbeam response');
+      r.hb = { sessionId: d.session_id, embedUrl: d.embed_url, adminToken: d.admin_token };
+      io.to(r.id).emit('hb:started', { embedUrl: r.hb.embedUrl }); setController(r, me.id);
+      if (cb) cb({ ok: true });
+    } catch (e) { console.error('hyperbeam start:', e.message); if (cb) cb({ error: 'Could not start the browser. Check the Hyperbeam key and free minutes.' }); }
+    finally { r.hbStarting = false; }
+  });
+  on('browser:stop', async (r, me) => {
+    if (!r.hb) return;
+    if (r.controller && r.controller !== me.id && r.members[0].id !== me.id) return; // controller or host only
+    await stopHb(r);
+  });
+  on('browser:control', (r, me, cb, c) => {
+    if (!r.hb || !c || typeof c !== 'object') return;
+    const host = r.members[0].id === me.id, isCtl = r.controller === me.id;
+    if (c.action === 'take') { if (r.controller && !isCtl && !host) return cb && cb({ error: 'Someone else has control.' }); setController(r, me.id); }
+    else if (c.action === 'release') { if (isCtl || host) setController(r, null); }
+    else if (c.action === 'pass') { const to = isCtl || host ? r.members.find((m) => m.id === c.to) : null; if (to) setController(r, to.id); }
+  });
+
   sock.on('disconnect', () => {
-    if (!id) return; const rid = id, r = room(rid); const nm = who(r, sock.id); r.members = r.members.filter((m) => m.id !== sock.id); sys(rid, r, `${nm} left`);
-    sock.to(rid).emit('peer:left', sock.id);
-    if (!r.members.length) setTimeout(() => { const x = rooms.get(rid); if (x && !x.members.length) { stopHb(rid); rooms.delete(rid); } }, 60000);
+    const r = sock.data.roomId && rooms.get(sock.data.roomId); const me = r && r.members.find((m) => m.sid === sock.id);
+    if (!me) return; me.sid = null; // grace period so brief drops and reconnects do not flicker or duplicate
+    me.dropTimer = setTimeout(() => { if (!me.sid) removeMember(r, me); }, GRACE_MS);
   });
 });
 server.listen(process.env.PORT || 4000, () => console.log('server up'));
