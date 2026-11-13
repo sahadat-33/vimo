@@ -9,8 +9,8 @@ const beep = () => { try { const a = new AudioContext(), o = a.createOscillator(
 const REACTIONS = ['❤️', '😂', '😱', '🔥', '😭', '🍿'];
 const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export default function ChatAndQueue({ socket, selfId, chat, queue, current }: { socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
-  const [tab, setTab] = useState<'chat' | 'queue'>('chat');
+export default function ChatAndQueue({ socket, selfId, chat, queue, current, view }: { view?: 'chat' | 'queue'; socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
+  const [itab, setTab] = useState<'chat' | 'queue'>('chat'); const tab = view ?? itab;
   const [msgs, setMsgs] = useState(chat), [text, setText] = useState(''), [url, setUrl] = useState(''), [err, setErr] = useState('');
   const [unread, setUnread] = useState(0);
   const end = useRef<HTMLDivElement>(null); const tabRef = useRef(tab); tabRef.current = tab;
@@ -32,7 +32,7 @@ export default function ChatAndQueue({ socket, selfId, chat, queue, current }: {
   const input = 'min-w-0 flex-1 rounded-xl bg-dusk border border-plum px-3 py-2';
 
   return <div className="flex h-full flex-col">
-    <div className="flex">{tabBtn('chat', MessageCircle, 'Chat', unread)}{tabBtn('queue', ListVideo, `Queue (${queue.length})`)}</div>
+    {!view && <div className="flex">{tabBtn('chat', MessageCircle, 'Chat', unread)}{tabBtn('queue', ListVideo, `Queue (${queue.length})`)}</div>}
     {tab === 'chat' ? <>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {msgs.map((m) => m.system

@@ -1,59 +1,56 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import DailyIframe, { DailyCall, DailyParticipant } from '@daily-co/daily-js';
-import { Mic, MicOff, Video, VideoOff, Zap } from 'lucide-react';
-import { api } from '@/lib/socket';
+import type { DailyParticipant } from '@daily-co/daily-js';
+import { MicOff, WifiOff } from 'lucide-react';
+import type { Member } from '@/lib/types';
+import type { CallState } from '@/lib/useCall';
+import { Skeleton, cx } from './ui';
 
-function Tile({ p, round, style }: { p: DailyParticipant; round?: boolean; style?: React.CSSProperties }) {
+const sidOf = (p: DailyParticipant) => (p.userData as { sid?: string } | undefined)?.sid;
+const find = (parts: DailyParticipant[], id: string) => parts.find((p) => sidOf(p) === id);
+
+function AudioEl({ track }: { track?: MediaStreamTrack }) {
+  const a = useRef<HTMLAudioElement>(null);
+  useEffect(() => { if (a.current) a.current.srcObject = track ? new MediaStream([track]) : null; }, [track]);
+  return <audio ref={a} autoPlay />;
+}
+/** Plays remote voices exactly once, regardless of which tiles are on screen. */
+export function CallAudio({ parts }: { parts: DailyParticipant[] }) {
+  return <>{parts.filter((p) => !p.local).map((p) => <AudioEl key={p.session_id} track={p.tracks.audio.persistentTrack} />)}</>;
+}
+
+export function Tile({ member, p, isSelf, round, callState }: { member: Member; p?: DailyParticipant; isSelf: boolean; round?: boolean; callState: CallState }) {
   const v = useRef<HTMLVideoElement>(null);
-  const vt = p.tracks.video.persistentTrack, at = p.tracks.audio.persistentTrack;
-  useEffect(() => { if (v.current) v.current.srcObject = new MediaStream([vt, !p.local && at].filter(Boolean) as MediaStreamTrack[]); }, [vt, at, p.local]);
-  return <div style={style} className={`relative overflow-hidden bg-dusk ${round ? 'rounded-full' : 'rounded-xl'} aspect-square sm:aspect-video`}>
-    <span className="absolute bottom-1 left-1 z-10 rounded bg-black/60 px-1.5 text-xs">{p.user_name}</span>
-    <video ref={v} autoPlay playsInline muted={p.local} className={`h-full w-full object-cover ${p.local ? '-scale-x-100' : ''}`} />
-    {p.tracks.audio.state === 'off' ? <MicOff size={14} className="absolute bottom-1 right-1 text-ember" /> : null}
+  const vt = p?.tracks.video.persistentTrack, vs = p?.tracks.video.state;
+  const live = !!vt && vs === 'playable';
+  useEffect(() => { if (v.current) v.current.srcObject = live && vt ? new MediaStream([vt]) : null; }, [vt, live]);
+  const as = p?.tracks.audio.state;
+  const micOff = !!p && (as === 'off' || as === 'blocked');
+  const status = !p ? (callState === 'joining' ? 'Joining call…' : 'Not in call') : vs === 'off' ? 'Camera off' : vs === 'blocked' ? 'Camera blocked' : vs === 'loading' ? 'Connecting…' : vs === 'interrupted' ? 'Feed interrupted' : '';
+  return <div className={cx('relative aspect-video overflow-hidden bg-surface2', round ? 'aspect-square rounded-full' : 'rounded-xl', !p && 'opacity-70')}>
+    <video ref={v} autoPlay playsInline muted className={cx('h-full w-full object-cover', isSelf && '-scale-x-100', !live && 'invisible')} />
+    {!live && <div style={{ background: member.color + '33' }} className="absolute inset-0 grid place-items-center text-center">
+      <div><span className="text-3xl">{member.avatar}</span>{!round && status && <p className="mt-1 flex items-center justify-center gap-1 text-xs text-muted">{!p && callState !== 'joining' && <WifiOff size={12} />}{status}</p>}</div></div>}
+    {!round && <span className="absolute bottom-1 left-1 max-w-[80%] truncate rounded bg-black/60 px-1.5 text-xs">{member.name}{isSelf ? ' (you)' : ''}</span>}
+    {micOff && <span className="absolute bottom-1 right-1 rounded-full bg-black/60 p-1 text-accent" aria-label="Microphone off"><MicOff size={12} /></span>}
   </div>;
 }
 
-function Floating({ children, index }: { children: React.ReactNode; index: number }) {
-  const [pos, setPos] = useState({ x: 12, y: 56 + index * 104 }); const d = useRef<{ dx: number; dy: number } | null>(null);
-  return <div className="fixed z-40 touch-none" style={{ left: pos.x, top: pos.y, width: 96 }}
-    onPointerDown={(e) => { d.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }; e.currentTarget.setPointerCapture(e.pointerId); }}
-    onPointerMove={(e) => d.current && setPos({ x: Math.max(0, Math.min(innerWidth - 96, e.clientX - d.current.dx)), y: Math.max(0, Math.min(innerHeight - 96, e.clientY - d.current.dy)) })}
-    onPointerUp={() => (d.current = null)}>{children}</div>;
+export function FeedGrid({ members, parts, selfId, callState }: { members: Member[]; parts: DailyParticipant[]; selfId: string; callState: CallState }) {
+  const sorted = [...members].sort((a, b) => (a.id === selfId ? -1 : b.id === selfId ? 1 : 0));
+  if (callState === 'joining' && parts.length === 0) return <div className="grid grid-cols-2 gap-2 p-2">{sorted.map((m) => <Skeleton key={m.id} className="aspect-video" />)}</div>;
+  return <div className="grid grid-cols-2 gap-2 p-2">{sorted.map((m) => <Tile key={m.id} member={m} p={find(parts, m.id)} isSelf={m.id === selfId} callState={callState} />)}</div>;
 }
 
-export default function VideoCallBar({ userName, roomId, layout, playing, smartMic, setSmartMic }: {
-  userName: string; roomId: string; layout: 'desktop' | 'portrait' | 'landscape'; playing: boolean; smartMic: boolean; setSmartMic: (b: boolean) => void }) {
-  const call = useRef<DailyCall | null>(null);
-  const [parts, setParts] = useState<DailyParticipant[]>([]);
-  const [mic, setMic] = useState(true), [cam, setCam] = useState(true), [err, setErr] = useState('');
-
-  useEffect(() => {
-    let dead = false; const c = DailyIframe.getCallInstance() ?? DailyIframe.createCallObject({ audioSource: true, videoSource: true }); call.current = c;
-    const upd = () => setParts(Object.values(c.participants()));
-    c.on('participant-joined', upd).on('participant-updated', upd).on('participant-left', upd).on('joined-meeting', upd)
-      .on('error', () => setErr('Call connection lost.'));
-    (async () => {
-      const r = await api(`/api/daily/${roomId}`); if (!r.ok) return setErr('Could not start the call. Check your Daily key.');
-      const { url } = await r.json(); if (!dead) await c.join({ url, userName }).catch(() => setErr('Camera or mic permission is needed to join the call.'));
-    })();
-    return () => { dead = true; c.destroy(); };
-  }, [roomId]);
-
-  // Smart Mic: playing = both muted, paused = both unmuted (each client applies the same rule to itself)
-  useEffect(() => { if (smartMic && call.current) { call.current.setLocalAudio(!playing); setMic(!playing); } }, [playing, smartMic]);
-
-  const tiles = parts.map((p) => <Tile key={p.session_id} p={p} round={layout === 'landscape'} />);
-  const controls = <div className="flex items-center gap-2 p-2">
-    <button aria-label={mic ? 'Mute mic' : 'Unmute mic'} onClick={() => { call.current?.setLocalAudio(!mic); setMic(!mic); }} className="rounded-full bg-plum p-2">{mic ? <Mic size={18} /> : <MicOff size={18} />}</button>
-    <button aria-label={cam ? 'Camera off' : 'Camera on'} onClick={() => { call.current?.setLocalVideo(!cam); setCam(!cam); }} className="rounded-full bg-plum p-2">{cam ? <Video size={18} /> : <VideoOff size={18} />}</button>
-    <button aria-pressed={smartMic} onClick={() => setSmartMic(!smartMic)} className={`flex items-center gap-1 rounded-full px-3 py-2 text-sm font-semibold ${smartMic ? 'bg-blush text-night' : 'bg-plum'}`}>
-      <Zap size={14} /> Smart Mic: {smartMic ? 'ON' : 'OFF'}</button>
-    {err && <span role="alert" className="text-xs text-ember">{err}</span>}</div>;
-
-  if (layout === 'landscape') return <>{parts.map((p, i) => <Floating key={p.session_id} index={i}><Tile p={p} round /></Floating>)}
-    <div className="fixed bottom-2 left-1/2 z-40 -translate-x-1/2 rounded-full bg-black/60">{controls}</div></>;
-  return <div className={layout === 'desktop' ? 'p-2' : 'px-2'}>
-    <div className="grid max-h-[42vh] grid-cols-2 gap-2 overflow-y-auto">{tiles}</div>{controls}</div>;
+function Floating({ children, index }: { children: React.ReactNode; index: number }) {
+  const [pos, setPos] = useState({ x: 12, y: 64 + index * 88 }); const d = useRef<{ dx: number; dy: number } | null>(null);
+  return <div className="fixed z-40 w-20 touch-none" style={{ left: pos.x, top: pos.y }}
+    onPointerDown={(e) => { d.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }; e.currentTarget.setPointerCapture(e.pointerId); }}
+    onPointerMove={(e) => d.current && setPos({ x: Math.max(0, Math.min(innerWidth - 80, e.clientX - d.current.dx)), y: Math.max(0, Math.min(innerHeight - 80, e.clientY - d.current.dy)) })}
+    onPointerUp={() => (d.current = null)}>{children}</div>;
+}
+/** Landscape cinema mode: draggable round bubbles (first 4 people; everyone is in the People tab). */
+export function FloatingFeeds({ members, parts, selfId, callState }: { members: Member[]; parts: DailyParticipant[]; selfId: string; callState: CallState }) {
+  const sorted = [...members].sort((a, b) => (a.id === selfId ? -1 : b.id === selfId ? 1 : 0)).slice(0, 4);
+  return <>{sorted.map((m, i) => <Floating key={m.id} index={i}><Tile member={m} p={find(parts, m.id)} isSelf={m.id === selfId} callState={callState} round /></Floating>)}</>;
 }

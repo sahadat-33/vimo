@@ -10,8 +10,9 @@ const loadYT = () => new Promise<void>((res) => {
   if (!document.getElementById('yt-api')) { const s = document.createElement('script'); s.id = 'yt-api'; s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s); }
 });
 
-export default function StageYouTube({ playback, current, emitPlayback, onEnded }: StageProps & { onEnded?: () => void }) {
+export default function StageYouTube({ playback, current, emitPlayback, onEnded, onDrift }: StageProps & { onEnded?: () => void }) {
   const endedRef = useRef(onEnded); endedRef.current = onEnded;
+  const driftRef = useRef(onDrift); driftRef.current = onDrift;
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<any>(null);
   const remote = useRef(false);            // isRemoteUpdate mutex
@@ -43,6 +44,7 @@ export default function StageYouTube({ playback, current, emitPlayback, onEnded 
       timer = setInterval(() => {
         const p = player.current; if (!p?.getCurrentTime) return;
         const t = p.getCurrentTime(); n++;
+        driftRef.current?.(Math.abs(t - expected())); // real measured drift, used for the Sync indicator
         if (!remote.current && Math.abs(t - lastT.current) > 1.6 && pbRef.current.playing) emit.current(snapshot(true)); // local seek
         else if (n % 3 === 0 && !remote.current && Math.abs(t - expected()) > 0.8) withRemote(() => p.seekTo(expected(), true)); // drift heartbeat
         lastT.current = t;

@@ -4,7 +4,8 @@ import { FileVideo } from 'lucide-react';
 import type { StageProps } from '@/lib/types';
 
 // Everyone opens the same file on their own device. Play, pause, seek and drift are synced through Socket.io.
-export default function StageLocalFile({ playback, emitPlayback }: StageProps) {
+export default function StageLocalFile({ playback, emitPlayback, onDrift }: StageProps) {
+  const driftRef = useRef(onDrift); driftRef.current = onDrift;
   const vid = useRef<HTMLVideoElement>(null);
   const remote = useRef(false);
   const [name, setName] = useState('');
@@ -22,11 +23,14 @@ export default function StageLocalFile({ playback, emitPlayback }: StageProps) {
     });
   }, [playback, name]);
 
-  useEffect(() => { // drift heartbeat every 3s
+  useEffect(() => { // verify drift every 1s (feeds the Sync indicator), correct every 3s
+    let n = 0;
     const t = setInterval(() => {
-      const v = vid.current; if (!v || remote.current || !pbRef.current.playing) return;
-      if (Math.abs(v.currentTime - expected()) > 0.8) withRemote(() => { v.currentTime = expected(); });
-    }, 3000);
+      const v = vid.current; if (!v || !v.src) return; n++;
+      driftRef.current?.(Math.abs(v.currentTime - expected()));
+      if (remote.current || !pbRef.current.playing) return;
+      if (n % 3 === 0 && Math.abs(v.currentTime - expected()) > 0.8) withRemote(() => { v.currentTime = expected(); });
+    }, 1000);
     return () => clearInterval(t);
   }, []);
 
