@@ -17,6 +17,7 @@ import RoomPanel, { type PanelTab } from '@/components/RoomPanel';
 import { Skeleton, StatusPill, cx } from '@/components/ui';
 
 type Layout = 'desktop' | 'portrait' | 'landscape';
+const PANEL_W = 'min(340px, 88vw)';
 function useLayout(): Layout {
   const [l, setL] = useState<Layout>('portrait');
   useEffect(() => {
@@ -74,19 +75,20 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('connect_error', () => setOnline(false));
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
     s.on('playback', (p) => setPb({ playing: p.playing, time: p.time, rate: p.rate, at: Date.now() }));
-    s.on('queue:updated', (q) => setState((x) => x && { ...x, ...q }));
+    s.on('queue:updated', (q) => { setState((x) => x && { ...x, queue: q.queue, current: q.current }); if (q.playback) setPb({ ...q.playback, at: Date.now() }); });
+    s.on('file:updated', (d) => { setState((x) => x && { ...x, file: d.file }); setPb({ ...d.playback, at: Date.now() }); });
     s.on('peer:joined', (m: Member) => setState((x) => x && { ...x, members: [...x.members.filter((y) => y.id !== m.id), m] }));
     s.on('peer:left', (id) => setState((x) => x && { ...x, members: x.members.filter((y) => y.id !== id) }));
     s.on('chat:message', (m) => setState((x) => x && { ...x, chat: [...x.chat, m] }));
     s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
     s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
-    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller']
+    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
   const emitPlayback = useCallback((p: Playback) => { setPb({ ...p, at: Date.now() }); socket?.emit('playback', p); }, [socket]);
 
-  if (err) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><p role="alert" className="text-accent">{err}</p></div>;
+  if (err) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><div className="space-y-3"><p role="alert" className="text-accent">{err}</p><a href="/" className="inline-block rounded-xl bg-surface2 px-4 py-2 text-sm font-semibold">Back to home</a></div></div>;
   if (!socket || !state) return <RoomSkeleton />;
   return <RoomView {...{ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }} />;
 }
@@ -94,7 +96,13 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
   const router = useRouter(); const layout = useLayout();
-  const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false);
+  const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    const c = matchMedia('(pointer: coarse)').matches; setCoarse(c); if (c) return;
+    if ((navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive) { setTouched(true); return; }
+    const f = () => setTouched(true), evs = ['pointerup', 'keydown'];
+    evs.forEach((e) => addEventListener(e, f, { passive: true })); return () => evs.forEach((e) => removeEventListener(e, f));
+  }, []);
   const [open, setOpen] = useState(true), [tab, setTab] = useState<PanelTab>('chat'), [unread, setUnread] = useState(0);
   const [floaters, setFloaters] = useState<{ id: string; emoji: string; x: number }[]>([]);
   const [sync, setSync] = useState<'synced' | 'resyncing' | 'unknown'>('unknown'); const lastReport = useRef(0);
@@ -123,9 +131,8 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const leave = () => { socket.emit('room:leave'); setTimeout(() => socket.disconnect(), 200); router.push('/'); };
   const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
 
-  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback, onDrift };
-  const next = state.queue[0];
-  const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} onEnded={() => { if (isHost && next) socket.emit('video:change', next); }} />
+  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback, onDrift, interacted: touched, file: state.file };
+  const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} />
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
@@ -133,8 +140,8 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {typeof document !== 'undefined' && document.fullscreenEnabled &&
-        <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className="absolute right-2 top-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-70 transition hover:opacity-100"><Maximize2 size={16} /></button>}
-      {!touched && pb.playing && state.mode !== 'browser' && layout !== 'desktop' &&
+        <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={cx('absolute right-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-70 transition hover:opacity-100', layout === 'landscape' ? 'top-12' : 'top-2')}><Maximize2 size={16} /></button>}
+      {coarse && !touched && pb.playing && state.mode !== 'browser' &&
         <button onClick={() => { setTouched(true); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
@@ -171,12 +178,13 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   let body: React.ReactNode;
   if (layout === 'landscape') body = (
     <div className="fixed inset-0 h-[100dvh] w-screen overflow-hidden bg-black">
-      <div className="absolute inset-0">{stage}</div>
-      <div className="absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent">{topBar}{banner}</div>
-      <FloatingFeeds members={state.members} parts={call.parts} selfId={selfId} callState={call.state} />
-      <div className="absolute bottom-2 left-1/2 z-40 -translate-x-1/2">{controls(true)}</div>
+      <div className="absolute inset-y-0 left-0 transition-[right] duration-300" style={{ right: open ? PANEL_W : 0 }}>
+        <div className="absolute inset-0">{stage}</div>
+        <div className="absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent">{topBar}{banner}</div>
+        <div className="pointer-events-none absolute inset-x-0 top-11 z-40 flex justify-center"><div className="pointer-events-auto">{controls(true)}</div></div></div>
+      {!open && <FloatingFeeds members={state.members} parts={call.parts} selfId={selfId} callState={call.state} />}
       <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
-        className={cx('fixed right-0 top-0 z-50 h-[100dvh] w-[340px] max-w-[88vw] border-l border-white/10 bg-bg/90 backdrop-blur transition-transform duration-300', open ? 'translate-x-0' : 'translate-x-full')}>
+        style={{ width: PANEL_W }} className={cx('fixed right-0 top-0 z-50 h-[100dvh] border-l border-white/10 bg-bg/90 backdrop-blur transition-transform duration-300', open ? 'translate-x-0' : 'translate-x-full')}>
         {panel(open)}</aside>
     </div>);
   else if (layout === 'desktop') body = (
