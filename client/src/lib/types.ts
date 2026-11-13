@@ -47,18 +47,22 @@ export interface StageProps {
   file: RoomFile | null;
 }
 export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000';
-export const getPass = () => (typeof window === 'undefined' ? '' : sessionStorage.getItem('passcode') || '');
+let memPass = '', memCid = ''; // fallback when a browser blocks sessionStorage
+export const setPass = (p: string) => { memPass = p; try { sessionStorage.setItem('passcode', p); } catch {} };
+export const clearPass = () => { memPass = ''; try { sessionStorage.removeItem('passcode'); } catch {} };
+export const getPass = () => { if (typeof window === 'undefined') return ''; try { return sessionStorage.getItem('passcode') || memPass; } catch { return memPass; } };
 export function getCid(): string { // stable per-tab id so reconnects never create a second participant
   if (typeof window === 'undefined') return '';
   const valid = (value: string | null): value is string => !!value && /^[A-Za-z0-9_-]{8,64}$/.test(value);
-  let c = sessionStorage.getItem('cid');
+  let c: string | null = null; try { c = sessionStorage.getItem('cid'); } catch {}
+  if (!valid(c) && valid(memCid)) c = memCid;
   if (!valid(c)) {
     const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '')
       : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
     c = random.slice(0, 64);
     if (!valid(c)) c = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(0, 64);
-    sessionStorage.setItem('cid', c);
+    memCid = c; try { sessionStorage.setItem('cid', c); } catch {}
   }
   return c;
 }

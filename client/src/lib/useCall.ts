@@ -28,6 +28,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
   const call = useRef<DailyCall | null>(null);
   const sidRef = useRef(sid); sidRef.current = sid;
   const autoMuted = useRef(false);
+  const tracks = useRef<{ audio?: MediaStreamTrack; video?: MediaStreamTrack }>({});
   const [parts, setParts] = useState<DailyParticipant[]>([]);
   const [state, setState] = useState<CallState>('joining');
   const [mic, setMic] = useState(false), [cam, setCam] = useState(false);
@@ -36,7 +37,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
 
   useEffect(() => {
     let dead = false, created: DailyCall | null = null;
-    setState('joining'); setError('');
+    setState('joining'); setError(''); setMic(false); setCam(false);
     (async () => {
       // A previous attempt may still be shutting down. Daily refuses a second call object (and a half-destroyed one cannot join), so wait for it.
       const old = DailyIframe.getCallInstance(); if (old) await old.destroy().catch(() => {});
@@ -69,7 +70,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
         }
       }
     })();
-    return () => { dead = true; const x = created; if (call.current === x) call.current = null; x?.destroy().catch(() => {}); };
+    return () => { dead = true; tracks.current.audio?.stop(); tracks.current.video?.stop(); tracks.current = {}; const x = created; if (call.current === x) call.current = null; x?.destroy().catch(() => {}); };
   }, [roomId, userName, attempt]);
 
   useEffect(() => { if (state === 'joined') call.current?.setUserData({ sid }).catch(() => {}); }, [sid, state]);
@@ -86,8 +87,30 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
     else if (autoMuted.current) { autoMuted.current = false; c.setLocalAudio(true); }
   }, [playing, smartMic, state]);
 
-  const toggleMic = useCallback(() => { const c = call.current; if (!c) return; autoMuted.current = false; setMediaNote(''); c.setLocalAudio(!c.localAudio()); }, []);
-  const toggleCam = useCallback(() => { const c = call.current; if (!c) return; setMediaNote(''); c.setLocalVideo(!c.localVideo()); }, []);
+  // Turning a device on asks the browser for permission right here, inside the tap, so the prompt always appears and failures are specific.
+  const enable = useCallback(async (kind: 'audio' | 'video') => {
+    const c = call.current; if (!c) return;
+    if (!navigator.mediaDevices?.getUserMedia) { setMediaNote('This browser can’t use the camera or microphone here. Open the link in Chrome or Safari.'); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(kind === 'audio' ? { audio: { echoCancellation: true, noiseSuppression: true } } : { video: { facingMode: 'user' } });
+      const track = stream.getTracks()[0]; tracks.current[kind]?.stop(); tracks.current[kind] = track;
+      await c.setInputDevicesAsync(kind === 'audio' ? { audioSource: track } : { videoSource: track });
+      if (kind === 'audio') { c.setLocalAudio(true); setMic(true); } else { c.setLocalVideo(true); setCam(true); }
+    } catch (e: any) {
+      const what = kind === 'audio' ? 'microphone' : 'camera', n = e?.name;
+      setMediaNote(n === 'NotAllowedError' || n === 'SecurityError' ? `Access to your ${what} is blocked. Tap the lock icon in the address bar, allow the ${what}, then tap the button again.`
+        : n === 'NotFoundError' || n === 'OverconstrainedError' ? `No ${what} was found on this device.`
+        : n === 'NotReadableError' || n === 'AbortError' ? `Your ${what} is being used by another app.`
+        : `The ${what} isn’t available right now. You can keep watching and chatting.`);
+    }
+  }, []);
+  const disable = useCallback((kind: 'audio' | 'video') => {
+    const c = call.current; if (!c) return;
+    if (kind === 'audio') { c.setLocalAudio(false); setMic(false); } else { c.setLocalVideo(false); setCam(false); }
+    tracks.current[kind]?.stop(); tracks.current[kind] = undefined; // release the device so the browser's recording indicator turns off
+  }, []);
+  const toggleMic = useCallback(() => { const c = call.current; if (!c) return; autoMuted.current = false; setMediaNote(''); if (c.localAudio()) disable('audio'); else void enable('audio'); }, [enable, disable]);
+  const toggleCam = useCallback(() => { const c = call.current; if (!c) return; setMediaNote(''); if (c.localVideo()) disable('video'); else void enable('video'); }, [enable, disable]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { parts, state, mic, cam, error, mediaNote, net, toggleMic, toggleCam, retry };
 }
