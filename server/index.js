@@ -125,12 +125,20 @@ io.on('connection', (sock) => {
   sock.on('room:join', (roomId, profile, cb) => {
     if (typeof cb !== 'function') return;
     if (!allow(sock, 'room:join')) return cb({ error: 'Slow down a little.' });
-    if (typeof roomId !== 'string' || !ROOM_RE.test(roomId) || !profile || typeof profile !== 'object' || typeof profile.cid !== 'string' || !CID_RE.test(profile.cid)) return cb({ error: 'Invalid request.' });
+    if (typeof roomId !== 'string' || !ROOM_RE.test(roomId)) {
+      console.warn('room:join rejected: invalid roomId');
+      return cb({ error: 'Invalid room code. Reopen the invite link or check the room code.' });
+    }
+    const cid = profile && typeof profile === 'object' && typeof profile.cid === 'string' ? profile.cid.trim() : '';
+    if (!cid || !CID_RE.test(cid)) {
+      console.warn('room:join rejected: invalid participant ID');
+      return cb({ error: 'Your browser session needs refreshing. Reload the page and try again.' });
+    }
     const prof = { name: clean(profile.name, 20) || 'Guest', avatar: clean(profile.avatar, 8) || '🙂', color: COLOR_RE.test(profile.color) ? profile.color : '#A78BFA' };
     if (!rooms.has(roomId) && rooms.size >= MAX_ROOMS) return cb({ error: 'The server is busy. Try again later.' });
     const old = sock.data.roomId && rooms.get(sock.data.roomId);
     if (old && old.id !== roomId) { const m = old.members.find((x) => x.sid === sock.id); if (m) removeMember(old, m); sock.leave(old.id); }
-    const r = room(roomId), pid = pidOf(profile.cid);
+    const r = room(roomId), pid = pidOf(cid);
     let me = r.members.find((m) => m.id === pid), isNew = false;
     if (me) { clearTimeout(me.dropTimer); me.dropTimer = null; me.sid = sock.id; Object.assign(me, prof); } // idempotent: reconnect or repeated join
     else {
