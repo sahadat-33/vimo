@@ -59,6 +59,25 @@ const s3Head = async (key) => { const res = await fetch(presign('HEAD', key, 300
   return res.ok ? Number(res.headers.get('content-length')) : -1; };
 const s3Delete = (key) => s3On() && fetch(presign('DELETE', key, 300), { method: 'DELETE', signal: AbortSignal.timeout(10000) }).catch(() => {});
 const dropFile = (r) => { if (r.file) s3Delete(r.file.key); r.file = null; };
+/* Storage self-test: uploads, downloads and deletes a tiny object from the server side. It proves region, keys, bucket and signing are right
+   (it cannot test browser CORS). Result is logged at boot and shown, without secrets, at /health. */
+let lastStorage = { configured: s3On() ? null : false }, lastTestAt = 0;
+async function storageSelfTest() {
+  lastTestAt = Date.now();
+  if (!s3On()) return (lastStorage = { configured: false });
+  const out = { configured: true, region: S3.region, steps: [] }, key = `rooms/_selftest/${uid()}.txt`;
+  const run = async (step, method, body) => {
+    try {
+      const res = await fetch(presign(method, key, 120), { method, body, signal: AbortSignal.timeout(10000) });
+      const text = (await res.text()).slice(0, 600);
+      out.steps.push({ step, ok: res.ok, status: res.status, ...(res.ok ? {} : { code: (text.match(/<Code>([^<]+)<\/Code>/) || [])[1] || 'unknown' }) });
+      return res.ok;
+    } catch (e) { out.steps.push({ step, ok: false, error: e && e.name === 'TimeoutError' ? 'timeout' : 'network' }); return false; }
+  };
+  if (await run('upload', 'PUT', 'vimo')) { await run('download', 'GET'); await run('delete', 'DELETE'); }
+  out.ok = out.steps.length === 3 && out.steps.every((x) => x.ok);
+  return (lastStorage = out);
+}
 const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r.file.type, by: r.file.by, url: presign('GET', r.file.key, 12 * 3600) };
 
 /* ---------- room state. Keep in sync with client/src/lib/types.ts ---------- */
@@ -100,7 +119,10 @@ function removeMember(r, me) {
 }
 
 /* ---------- REST ---------- */
-app.get('/health', (_q, s) => s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0) }));
+app.get('/health', async (q, s) => { // add ?storage=1 to re-run the storage self-test (at most once every 30 s)
+  if (q.query.storage && s3On() && Date.now() - lastTestAt > 30000) await storageSelfTest();
+  s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0), storage: lastStorage });
+});
 app.use('/api', (q, s, n) => { const t = recent(hits, q.ip, 60000); if (t.length >= 60) return s.status(429).json({ error: 'rate_limited' }); t.push(Date.now()); n(); });
 app.post('/api/auth', (q, s) => {
   if (blocked(q.ip)) return s.status(429).json({ ok: false, error: 'too_many' });
@@ -297,4 +319,7 @@ io.on('connection', (sock) => {
     me.dropTimer = setTimeout(() => { if (!me.sid) removeMember(r, me); }, GRACE_MS);
   });
 });
-server.listen(process.env.PORT || 4000, () => console.log('server up'));
+server.listen(process.env.PORT || 4000, () => {
+  console.log('server up');
+  setTimeout(() => storageSelfTest().then((r) => console.log('[storage]', JSON.stringify(r))), 3000);
+});
