@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { SERVER, type Profile } from '@/lib/types';
+import { SERVER, setPass, type Profile } from '@/lib/types';
 
 const AVATARS = ['🐻', '🦊', '🐼', '🐯', '🐸', '🦄', '🐙', '🦉', '🐧', '🐰', '🦁', '🐨'];
 const COLORS = ['#f0a3b5', '#ff7a59', '#ffd166', '#7bdff2', '#b2f7ef', '#c3b1e1'];
@@ -15,7 +15,7 @@ export default function JoinGate({ needPass, initial, onDone }: { needPass: bool
       if (needPass) {
         const r = await fetch(`${SERVER}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode: pass }) });
         if (!r.ok) throw new Error();
-        sessionStorage.setItem('passcode', pass);
+        setPass(pass);
       }
       const p = { name: name.trim().slice(0, 20) || 'Guest', avatar, color };
       localStorage.setItem('profile', JSON.stringify(p)); onDone(p);

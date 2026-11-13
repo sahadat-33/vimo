@@ -57,7 +57,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
     loadYT().then(() => {
       if (dead || !host.current) return;
       try {
-      const el = document.createElement('div'); host.current.replaceChildren(el);
+      const el = document.createElement('div'); host.current.innerHTML = ''; host.current.appendChild(el);
       player.current = new window.YT.Player(el, { width: '100%', height: '100%', videoId: curRef.current?.id,
         playerVars: { playsinline: 1, rel: 0, modestbranding: 1, origin: window.location.origin },
         events: {

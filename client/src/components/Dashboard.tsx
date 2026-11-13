@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Globe, HardDrive, Home, Info, Lock, Settings, Users, Youtube } from 'lucide-react';
-import { SERVER, type Mode, type Profile } from '@/lib/types';
+import { SERVER, type Mode, type Profile, clearPass } from '@/lib/types';
 import { Button, Card, Logo, ModeCard, StatusPill, TextField, cx } from './ui';
 
 type View = 'home' | 'settings' | 'about';
@@ -74,7 +74,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
       {view === 'settings' && <><h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <Card className="max-w-md space-y-4"><form onSubmit={saveName} className="space-y-4"><TextField label="Nickname" value={name} maxLength={20} onChange={(e) => setName(e.target.value)} />
           <Button>{saved ? 'Saved' : 'Save nickname'}</Button></form>
-          <Button variant="ghost" onClick={() => { sessionStorage.removeItem('passcode'); onLock(); }}><Lock size={18} /> Lock this device</Button></Card></>}
+          <Button variant="ghost" onClick={() => { clearPass(); onLock(); }}><Lock size={18} /> Lock this device</Button></Card></>}
       {view === 'about' && <><h1 className="text-3xl font-bold tracking-tight">About</h1>
         <Card className="max-w-xl space-y-3 text-muted"><p>Vimo is a private watch room for up to 10 people, with live camera and voice built in.</p>
           <p>Your passcode is checked on the server and kept only for this browser session. Videos you share are stored in the room’s private storage and removed when the room closes.</p></Card></>}
