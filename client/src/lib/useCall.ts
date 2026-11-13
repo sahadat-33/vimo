@@ -35,19 +35,21 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    let dead = false;
+    let dead = false, created: DailyCall | null = null;
     setState('joining'); setError('');
-    const c = DailyIframe.getCallInstance() ?? DailyIframe.createCallObject({ startAudioOff: true, startVideoOff: true });
-    call.current = c;
-    const upd = () => { setParts(Object.values(c.participants())); setMic(!!c.localAudio()); setCam(!!c.localVideo()); };
-    c.on('participant-joined', upd); c.on('participant-updated', upd); c.on('participant-left', upd);
-    c.on('joined-meeting', () => { setState('joined'); setError(''); upd(); });
-    c.on('left-meeting', () => { if (!dead) setState('left'); });
-    c.on('camera-error', (e: any) => { setMediaNote(mediaMessage(e)); upd(); }); // non-blocking: the user stays in the room
-    c.on('error', (e: any) => { if (dead) return; setState('error'); setError(e?.errorMsg ? `Call error: ${String(e.errorMsg).slice(0, 120)}` : MSG.join); });
-    c.on('network-quality-change', (e: any) => setNet((e?.threshold as NetQuality) ?? null));
-
     (async () => {
+      // A previous attempt may still be shutting down. Daily refuses a second call object (and a half-destroyed one cannot join), so wait for it.
+      const old = DailyIframe.getCallInstance(); if (old) await old.destroy().catch(() => {});
+      if (dead) return;
+      const c = DailyIframe.createCallObject({ startAudioOff: true, startVideoOff: true });
+      created = c; call.current = c;
+      const upd = () => { setParts(Object.values(c.participants())); setMic(!!c.localAudio()); setCam(!!c.localVideo()); };
+      c.on('participant-joined', upd); c.on('participant-updated', upd); c.on('participant-left', upd);
+      c.on('joined-meeting', () => { setState('joined'); setError(''); upd(); });
+      c.on('left-meeting', () => { if (!dead) setState('left'); });
+      c.on('camera-error', (e: any) => { setMediaNote(mediaMessage(e)); upd(); }); // non-blocking: the user stays in the room
+      c.on('error', (e: any) => { if (dead) return; setState('error'); setError(e?.errorMsg ? `Call error: ${String(e.errorMsg).slice(0, 120)}` : MSG.join); });
+      c.on('network-quality-change', (e: any) => setNet((e?.threshold as NetQuality) ?? null));
       for (let i = 0; i < 3 && !dead; i++) {
         try {
           const r = await api(`/api/daily/${roomId}`).catch(() => null);
@@ -67,7 +69,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
         }
       }
     })();
-    return () => { dead = true; c.destroy(); };
+    return () => { dead = true; const x = created; if (call.current === x) call.current = null; x?.destroy().catch(() => {}); };
   }, [roomId, userName, attempt]);
 
   useEffect(() => { if (state === 'joined') call.current?.setUserData({ sid }).catch(() => {}); }, [sid, state]);
