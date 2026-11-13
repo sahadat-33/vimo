@@ -34,10 +34,13 @@ const io = new Server(server, { cors: { origin }, maxHttpBufferSize: 20000,
   allowRequest: (req, cb) => cb(null, origin === '*' || !req.headers.origin || req.headers.origin === origin) });
 
 
-/* ---------- shared video storage (any S3-compatible bucket, e.g. Cloudflare R2). Presigned URLs only, no SDK. ---------- */
-const S3 = { endpoint: (process.env.S3_ENDPOINT || '').replace(/\/+$/, ''), region: process.env.S3_REGION || 'auto', bucket: process.env.S3_BUCKET || '',
+/* ---------- shared video storage (any S3-compatible bucket; written for Backblaze B2, also fits R2). Presigned URLs only, no SDK. ---------- */
+const endpointUrl = (process.env.S3_ENDPOINT || '').replace(/\/+$/, '');
+const b2Region = (endpointUrl.match(/^https?:\/\/s3\.([a-z0-9-]+)\.backblazeb2\.com$/i) || [])[1]; // e.g. us-west-004
+if (b2Region && process.env.S3_REGION !== b2Region) console.warn(`S3_REGION is "${process.env.S3_REGION || ''}" but the Backblaze endpoint says "${b2Region}". Using "${b2Region}" (B2 never accepts "auto").`);
+const S3 = { endpoint: endpointUrl, region: b2Region || process.env.S3_REGION || 'auto', bucket: process.env.S3_BUCKET || '',
   id: process.env.S3_ACCESS_KEY_ID || '', secret: process.env.S3_SECRET_ACCESS_KEY || '', vhost: false };
-const MAX_UPLOAD = Math.max(10, Number(process.env.MAX_UPLOAD_MB) || 2048) * 1048576;
+const MAX_UPLOAD = Math.min(Math.max(10, Number(process.env.MAX_UPLOAD_MB) || 2048), 4700) * 1048576; // one PUT per file (no multipart); B2's single-upload ceiling is about 5 GB
 const s3On = () => !!(S3.endpoint && S3.bucket && S3.id && S3.secret);
 const hmac = (k, d) => crypto.createHmac('sha256', k).update(d).digest();
 const awsEnc = (x) => encodeURIComponent(x).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
