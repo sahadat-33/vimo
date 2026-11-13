@@ -33,7 +33,7 @@ export interface ClientToServer {
 export type AppSocket = Socket<ServerToClient, ClientToServer>;
 export interface StageProps {
   socket: AppSocket; selfId: string; roomId: string; playback: LocalPlayback; current: QueueItem | null;
-  emitPlayback: (p: Playback) => void;
+  emitPlayback: (p: Playback) => void; onDrift?: (driftSeconds: number) => void;
 }
 export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000';
 export const getPass = () => (typeof window === 'undefined' ? '' : sessionStorage.getItem('passcode') || '');
