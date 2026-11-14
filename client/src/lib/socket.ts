@@ -1,10 +1,11 @@
 import { io } from 'socket.io-client';
 import { AppSocket, SERVER, getPass } from './types';
 let s: AppSocket | null = null;
-export const getSocket = (): AppSocket => {
-  s ??= io(SERVER, { auth: { passcode: getPass() }, transports: ['websocket'] }) as AppSocket;
-  s.auth = { passcode: getPass() }; // always use the passcode the user entered most recently
-  if (!s.connected && !s.active) s.connect(); // re-open after the user left a room
+export const getSocket = (roomId?: string): AppSocket => {
+  const auth = { passcode: getPass(), room: roomId || '' };
+  s ??= io(SERVER, { auth, transports: ['websocket'] }) as AppSocket;
+  s.auth = auth; // read on every (re)connect: the host uses the passcode, friends use the invite link
+  if (!s.connected && !s.active) s.connect();
   return s;
 };
 export const api = (path: string, body?: object) =>

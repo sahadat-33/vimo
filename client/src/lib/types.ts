@@ -10,7 +10,7 @@ export interface HbInfo { embedUrl: string }
 export interface RoomFile { name: string; size: number; type: string; by: string; url: string } // url is a short-lived signed link to the shared video
 export interface JoinProfile extends Profile { cid: string }
 export interface RoomState { mode: Mode; queue: QueueItem[]; current: QueueItem | null; playback: Playback;
-  chat: ChatMessage[]; hb: HbInfo | null; controller: string | null; members: Member[]; file: RoomFile | null }
+  chat: ChatMessage[]; hb: HbInfo | null; controller: string | null; members: Member[]; file: RoomFile | null; hostOnly: boolean; hostId: string }
 export type FileSignal =
   | { kind: 'offer' | 'answer'; sdp: RTCSessionDescriptionInit }
   | { kind: 'ice'; candidate: RTCIceCandidateInit }
@@ -25,10 +25,12 @@ export interface ServerToClient {
   'file:uploading': (d: { by: string; name: string; pct: number }) => void;
   'chat:message': (m: ChatMessage) => void;
   'browser:controller': (id: string | null) => void;
-  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void;
+  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; 'room:settings': (s: { hostOnly: boolean }) => void;
 }
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
+  'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
+  'room:settings': (s: { hostOnly: boolean }) => void; 'call:url': (cb: (r: { url?: string; error?: string }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
   'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
@@ -43,6 +45,7 @@ export type AppSocket = Socket<ServerToClient, ClientToServer>;
 export interface StageProps {
   socket: AppSocket; selfId: string; roomId: string; playback: LocalPlayback; current: QueueItem | null;
   emitPlayback: (p: Playback) => void; onDrift?: (driftSeconds: number) => void;
+  isHost: boolean; canControl: boolean; // canControl is false for guests while the host keeps control
   interacted: boolean; // true once the user has tapped or typed on this page (browsers refuse sound before that)
   file: RoomFile | null;
 }

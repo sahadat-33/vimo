@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import DailyIframe from '@daily-co/daily-js';
 import type { DailyCall, DailyParticipant } from '@daily-co/daily-js';
-import { api } from './socket';
+import { getSocket } from './socket';
 
 export type CallState = 'joining' | 'joined' | 'error' | 'left';
 export type NetQuality = 'good' | 'low' | 'very-low' | null;
@@ -53,12 +53,10 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
       c.on('network-quality-change', (e: any) => setNet((e?.threshold as NetQuality) ?? null));
       for (let i = 0; i < 3 && !dead; i++) {
         try {
-          const r = await api(`/api/daily/${roomId}`).catch(() => null);
-          if (!r) throw new CallErr('network');
-          if (r.status === 401 || r.status === 429) throw new CallErr('auth');
-          if (r.status === 503) throw new CallErr('config');
-          if (!r.ok) throw new CallErr('server');
-          const { url } = await r.json();
+          const url = await new Promise<string>((res, rej) => { // the server hands the call link only to people who are in the party
+            const t = setTimeout(() => rej(new CallErr('network')), 10000);
+            getSocket(roomId).emit('call:url', (r) => { clearTimeout(t); if (r?.url) res(r.url); else rej(new CallErr(r?.error === 'not_configured' ? 'config' : 'server')); });
+          });
           await withTimeout(c.join({ url, userName, userData: { sid: sidRef.current }, startAudioOff: true, startVideoOff: true }), 15000);
           return;
         } catch (e) {
