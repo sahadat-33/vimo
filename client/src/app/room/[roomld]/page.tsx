@@ -42,13 +42,13 @@ export default function Room() {
   let roomId = String(candidate || pathMatch?.[1] || '').trim();
   try { roomId = decodeURIComponent(roomId); } catch { roomId = ''; }
 
-  const [ready, setReady] = useState(false), [hasPass, setHasPass] = useState(false), [profile, setProfile] = useState<Profile | null>(null);
+  const [ready, setReady] = useState(false), [profile, setProfile] = useState<Profile | null>(null);
   useEffect(() => {
     try { const p = localStorage.getItem('profile'); if (p) setProfile(JSON.parse(p)); } catch {}
-    setHasPass(!!getPass()); setReady(true);
+    setReady(true);
   }, []);
   if (!ready) return <RoomSkeleton />;
-  if (!profile || !hasPass) return <JoinGate needPass={!hasPass} initial={profile} onDone={(p) => { setProfile(p); setHasPass(true); }} />;
+  if (!profile) return <JoinGate initial={profile} onDone={(p) => setProfile(p)} />; // friends need only a name and a picture
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(roomId)) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><p role="alert" className="text-accent">This invite link is missing a valid room code. Ask the host to create a new room and share its invite link.</p></div>;
   return <RoomInner roomId={roomId} profile={profile} />;
 }
@@ -67,7 +67,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
   const modeApplied = useRef(false);
 
   useEffect(() => {
-    const s = getSocket(); setSocket(s); setOnline(s.connected);
+    const s = getSocket(roomId); setSocket(s); setOnline(s.connected);
     const join = () => s.emit('room:join', roomId, { ...profile, cid: getCid() }, (r) => {
       if (r.error || !r.state) return setErr(r.error || 'Could not join');
       const wanted = new URLSearchParams(location.search).get('mode');
@@ -77,7 +77,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     });
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
     if (s.connected) join();
-    s.on('connect_error', () => setOnline(false));
+    s.on('connect_error', (e) => { setOnline(false); if (e?.message === 'no_room') setErr('This party has ended, or the link is wrong. Ask your host for a new link.'); });
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
     s.on('playback', (p) => setPb({ playing: p.playing, time: p.time, rate: p.rate, at: Date.now() }));
     s.on('queue:updated', (q) => { setState((x) => x && { ...x, queue: q.queue, current: q.current }); if (q.playback) setPb({ ...q.playback, at: Date.now() }); });
@@ -87,7 +87,8 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('chat:message', (m) => setState((x) => x && { ...x, chat: [...x.chat, m] }));
     s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
     s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
-    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller']
+    s.on('room:settings', (d) => setState((x) => x && { ...x, hostOnly: d.hostOnly }));
+    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
@@ -101,6 +102,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
   const router = useRouter(); const layout = useLayout();
+  const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
     const c = matchMedia('(pointer: coarse)').matches; setCoarse(c); if (c) return;
@@ -136,12 +138,15 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const leave = () => { socket.emit('room:leave'); setTimeout(() => socket.disconnect(), 200); router.push('/'); };
   const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
 
-  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback, onDrift, interacted: touched, file: state.file };
+  const canControl = !state.hostOnly || selfId === state.hostId; // 'only I have control': guests watch, the host drives
+  const emitPb = canControl ? emitPlayback : () => {};
+  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, interacted: touched, file: state.file, isHost, canControl };
   const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} />
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
       {stageInner}
+      {!canControl && state.mode !== 'browser' && <><div className="absolute inset-0 z-[5]" aria-hidden /><span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted">🔒 Host controls playback</span></>}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {typeof document !== 'undefined' && document.fullscreenEnabled &&
@@ -168,11 +173,18 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const controls = (compact?: boolean) => (
     <RoomControls compact={compact} mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
       panelOpen={open} panelTab={tab} onToggleTab={toggleTab} unread={unread} onReact={(e) => socket.emit('reaction', e)} onInvite={invite}
-      smartMic={smartMic} setSmartMic={setSmartMic} onLeave={leave} />);
+      smartMic={smartMic} setSmartMic={setSmartMic} onLeave={leave} isHost={isHost} hostOnly={state.hostOnly} onHostOnly={(v) => socket.emit('room:settings', { hostOnly: v })} />);
   const panel = (showPeople: boolean) => (
     <RoomPanel tab={tab} onTab={setTab} unread={unread} queueCount={state.queue.length} peopleCount={state.members.length}
       people={showPeople ? <FeedGrid members={state.members} parts={call.parts} selfId={selfId} callState={call.state} /> : null}
-      chat={<ChatAndQueue view={tab === 'queue' ? 'queue' : 'chat'} socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} />} />);
+      chat={<ChatAndQueue view={tab === 'queue' ? 'queue' : 'chat'} socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} canControl={canControl} />} />);
+  const inviteLink = `${location.origin}/room/${roomId}`, canShare = typeof navigator !== 'undefined' && !!navigator.share;
+  const shareBanner = isHost && !inviteDismissed && state.members.length <= 1 ? (
+    <div role="region" aria-label="Invite friends" className="mx-2 mt-2 space-y-2 rounded-xl border border-white/10 bg-surface p-3 text-sm">
+      <div className="flex items-start justify-between gap-2"><p className="font-semibold">Share this link with your friends</p><button aria-label="Dismiss" onClick={() => setInviteDismissed(true)} className="px-1 text-muted">✕</button></div>
+      <p className="break-all rounded-lg bg-surface2 px-2.5 py-1.5 text-xs text-muted">{inviteLink}</p>
+      <div className="flex gap-2"><button onClick={() => { void invite(); }} className="flex-1 rounded-lg bg-primary py-2 font-semibold text-white">Copy link</button>
+        {canShare && <button onClick={() => { navigator.share({ title: 'Join my Vimo party', url: inviteLink }).catch(() => {}); }} className="flex-1 rounded-lg bg-surface2 py-2 font-semibold">Share…</button>}</div></div>) : null;
   const banner = !online && <p role="status" className="bg-accent px-3 py-1 text-center text-sm font-medium text-bg">Reconnecting to the server…</p>;
   const callErr = call.state === 'error'
     ? <div role="alert" className="mx-2 mt-2 flex items-center justify-between gap-2 rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent"><span>{call.error}</span>
@@ -193,14 +205,14 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
         {panel(open)}</aside>
     </div>);
   else if (layout === 'desktop') body = (
-    <div className="bg-cinema flex h-[100dvh] flex-col">{banner}{topBar}{callErr}
+    <div className="bg-cinema flex h-[100dvh] flex-col">{banner}{topBar}{callErr}{shareBanner}
       <div className="grid min-h-0 flex-1 transition-[grid-template-columns] duration-300 ease-out"
         style={{ gridTemplateColumns: open ? 'minmax(0,7fr) minmax(0,3fr)' : 'minmax(0,1fr) minmax(0,0fr)' }}>
         <div className="flex min-h-0 min-w-0 flex-col gap-2 px-2 pb-2">
           <div className="min-h-0 flex-1 overflow-hidden rounded-card bg-black shadow-card">{stage}</div>{controls()}</div>
         <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)} className="min-w-0 overflow-hidden border-l border-white/5">{panel(true)}</aside></div></div>);
   else body = (
-    <div className="bg-cinema flex h-[100dvh] flex-col overflow-hidden">{banner}{topBar}
+    <div className="bg-cinema flex h-[100dvh] flex-col overflow-hidden">{banner}{topBar}{shareBanner}
       <div className="aspect-video w-full shrink-0 bg-black">{stage}</div>
       <div className="px-2 pt-3">{controls()}</div>{callErr}
       <div aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
