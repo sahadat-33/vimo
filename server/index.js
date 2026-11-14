@@ -18,11 +18,11 @@ const uid = () => crypto.randomBytes(6).toString('hex');
 const pidOf = (cid) => crypto.createHash('sha256').update('cc:' + cid).digest('hex').slice(0, 12); // public id; the cid stays secret
 
 /* ---------- abuse control (per IP) ---------- */
-const fails = new Map(), hits = new Map();
+const fails = new Map(), hits = new Map(), roomFails = new Map();
 const recent = (m, ip, win) => { const now = Date.now(); const t = (m.get(ip) || []).filter((x) => now - x < win); m.set(ip, t); return t; };
 const blocked = (ip) => recent(fails, ip, 600000).length >= 10;
 const noteFail = (ip) => recent(fails, ip, 600000).push(Date.now());
-setInterval(() => { const now = Date.now(); for (const m of [fails, hits]) for (const [k, v] of m) if (!v.some((x) => now - x < 600000)) m.delete(k); }, 600000).unref();
+setInterval(() => { const now = Date.now(); for (const m of [fails, hits, roomFails]) for (const [k, v] of m) if (!v.some((x) => now - x < 600000)) m.delete(k); }, 600000).unref();
 const ipOf = (h) => String((h.headers['x-forwarded-for'] || h.address || '')).split(',')[0].trim();
 
 const app = express();
@@ -84,7 +84,7 @@ const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r
 const rooms = new Map();
 const room = (id) => {
   if (!rooms.has(id)) rooms.set(id, { id, mode: 'youtube', queue: [], current: null, playback: { playing: false, time: 0, rate: 1 },
-    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [], file: null, pending: new Map(), pbAt: Date.now() });
+    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [], file: null, pending: new Map(), pbAt: Date.now(), hostPid: null, hostOnly: false, createdAt: Date.now() });
   return rooms.get(id);
 };
 const pubMember = (m) => ({ id: m.id, name: m.name, avatar: m.avatar, color: m.color });
@@ -92,10 +92,12 @@ const setPb = (r, p) => { r.playback = p; r.pbAt = Date.now(); };
 // A joiner must start where the room is NOW, not where it was at the last play/pause event.
 const livePb = (r) => { const p = r.playback; return p.playing ? { ...p, time: clamp(p.time + ((Date.now() - r.pbAt) / 1000) * p.rate, 0, 172800, 0) } : p; };
 const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), file: pubFile(r), chat: r.chat.slice(-100),
-  hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember) }); // never include adminToken
+  hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember), hostOnly: r.hostOnly, hostId: r.hostPid }); // never include adminToken
 const who = (r, pid) => (r.members.find((m) => m.id === pid) || {}).name || 'Someone';
 const sys = (r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
   r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m); };
+const isHostMember = (r, me) => me.id === r.hostPid;
+const canControl = (r, me) => me.id === r.hostPid || !r.hostOnly; // 'only I have control' leaves playback to the host
 const sidOf = (r, pid) => { const m = r.members.find((x) => x.id === pid); return m && m.sid; };
 
 /* Hyperbeam control: the admin token only ever goes to the current controller's socket. */
@@ -133,31 +135,40 @@ const guard = (q, s, n) => {
   if (blocked(q.ip)) return s.status(429).json({ error: 'too_many' });
   if (ok(q.get('x-passcode'))) return n(); noteFail(q.ip); s.status(401).json({ error: 'bad passcode' });
 };
-app.post('/api/daily/:roomId', guard, async (q, s) => {
-  const r = ROOM_RE.test(q.params.roomId) ? rooms.get(q.params.roomId) : null;
-  if (!r || !r.members.length) return s.status(404).json({ error: 'no_room' });
-  if (!process.env.DAILY_API_KEY) return s.status(503).json({ error: 'not_configured' });
-  try {
-    if (!r.daily || Date.now() - r.dailyAt > 5.5 * 3600000) {
+function dailyUrl(r) { // one Daily room per party, shared by everyone in it
+  if (r.daily && Date.now() - r.dailyAt < 5.5 * 3600000) return Promise.resolve(r.daily);
+  if (!process.env.DAILY_API_KEY) return Promise.reject(Object.assign(new Error('not configured'), { code: 'not_configured' }));
+  return (r.dailyP = r.dailyP || (async () => {
+    try {
       const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST', signal: AbortSignal.timeout(10000),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DAILY_API_KEY}` },
         body: JSON.stringify({ properties: { max_participants: MAX, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
       if (!res.ok) throw new Error(`daily ${res.status}`);
-      r.daily = (await res.json()).url; r.dailyAt = Date.now();
-    }
-    s.json({ url: r.daily });
-  } catch (e) { console.error('daily error:', e.message); s.status(502).json({ error: 'daily_failed' }); }
+      r.daily = (await res.json()).url; r.dailyAt = Date.now(); return r.daily;
+    } catch (e) { console.error('daily error:', e.message); throw Object.assign(new Error('daily failed'), { code: 'daily_failed' }); }
+  })().finally(() => { r.dailyP = null; }));
+}
+app.post('/api/daily/:roomId', guard, async (q, s) => { // kept for compatibility; the app now asks over the socket (call:url)
+  const r = ROOM_RE.test(q.params.roomId) ? rooms.get(q.params.roomId) : null;
+  if (!r || !r.members.length) return s.status(404).json({ error: 'no_room' });
+  try { s.json({ url: await dailyUrl(r) }); } catch (e) { s.status(e.code === 'not_configured' ? 503 : 502).json({ error: e.code || 'daily_failed' }); }
 });
 
 /* ---------- sockets ---------- */
 io.use((sock, next) => {
   const ip = ipOf(sock.handshake);
+  const a = sock.handshake.auth || {};
+  if (ok(a.passcode)) { sock.data.authed = true; return next(); } // the host: knows the passcode
+  if (typeof a.room === 'string' && ROOM_RE.test(a.room)) { // a friend: only the invite link, and only for a party a host already started
+    if (recent(roomFails, ip, 600000).length >= 20) return next(new Error('too_many'));
+    if (rooms.has(a.room)) { sock.data.guestRoom = a.room; return next(); }
+    recent(roomFails, ip, 600000).push(Date.now()); return next(new Error('no_room'));
+  }
   if (blocked(ip)) return next(new Error('too_many'));
-  if (ok(sock.handshake.auth && sock.handshake.auth.passcode)) return next();
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call:url': [8, 60000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -188,11 +199,12 @@ io.on('connection', (sock) => {
       console.warn('room:join rejected: invalid participant ID');
       return cb({ error: 'Your browser session needs refreshing. Reload the page and try again.' });
     }
+    if (!sock.data.authed && sock.data.guestRoom !== roomId) return cb({ error: 'This invite link belongs to a different party.' });
     const prof = { name: clean(profile.name, 20) || 'Guest', avatar: clean(profile.avatar, 8) || '🙂', color: COLOR_RE.test(profile.color) ? profile.color : '#A78BFA' };
-    if (!rooms.has(roomId) && rooms.size >= MAX_ROOMS) return cb({ error: 'The server is busy. Try again later.' });
+    if (!rooms.has(roomId)) return cb({ error: 'This party has ended, or the link is wrong. Ask your host for a new link.' });
     const old = sock.data.roomId && rooms.get(sock.data.roomId);
     if (old && old.id !== roomId) { const m = old.members.find((x) => x.sid === sock.id); if (m) removeMember(old, m); sock.leave(old.id); }
-    const r = room(roomId), pid = pidOf(cid);
+    const r = rooms.get(roomId), pid = pidOf(cid);
     let me = r.members.find((m) => m.id === pid), isNew = false;
     if (me) { clearTimeout(me.dropTimer); me.dropTimer = null; me.sid = sock.id; Object.assign(me, prof); } // idempotent: reconnect or repeated join
     else {
@@ -200,36 +212,53 @@ io.on('connection', (sock) => {
       me = { id: pid, sid: sock.id, dropTimer: null, ...prof }; r.members.push(me); isNew = true;
     }
     sock.data.roomId = roomId; sock.join(roomId);
-    cb({ state: pub(r), selfId: pid, isHost: r.members[0].id === pid });
+    cb({ state: pub(r), selfId: pid, isHost: r.hostPid === pid });
     if (r.controller === pid && r.hb) sock.emit('hb:admin', { adminToken: r.hb.adminToken });
     if (isNew) { sock.to(roomId).emit('peer:joined', pubMember(me)); sys(r, `${me.name} joined`); }
   });
 
+  sock.on('room:create', (o, cb) => { // only someone who knows the passcode can start a party
+    if (typeof cb !== 'function') return;
+    if (!sock.data.authed) return cb({ error: 'Enter the passcode to start a party.' });
+    if (!allow(sock, 'room:create')) return cb({ error: 'Slow down a little.' });
+    if (!o || typeof o !== 'object' || typeof o.cid !== 'string' || !CID_RE.test(o.cid) || !MODES.includes(o.mode)) return cb({ error: 'Invalid request.' });
+    if (rooms.size >= MAX_ROOMS) return cb({ error: 'The server is busy. Try again later.' });
+    const r = room(uid()); r.hostPid = pidOf(o.cid); r.hostOnly = o.hostOnly === true; r.mode = o.mode;
+    if (o.video && typeof o.video.id === 'string' && YT_RE.test(o.video.id)) r.current = { id: o.video.id, title: clean(o.video.title, 120) || o.video.id, addedBy: r.hostPid };
+    cb({ roomId: r.id });
+  });
+  on('room:settings', (r, me, _cb, s) => {
+    if (!isHostMember(r, me) || !s || typeof s.hostOnly !== 'boolean' || s.hostOnly === r.hostOnly) return;
+    r.hostOnly = s.hostOnly; sys(r, s.hostOnly ? `${me.name} is now the only one in control` : `${me.name} gave everyone playback control`);
+    io.to(r.id).emit('room:settings', { hostOnly: r.hostOnly });
+  });
+  on('call:url', async (r, _me, cb) => { if (!cb) return; try { cb({ url: await dailyUrl(r) }); } catch (e) { cb({ error: e.code || 'daily_failed' }); } });
   on('room:leave', (r, me) => { removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
   on('mode:set', (r, me, _cb, mode) => {
-    if (!MODES.includes(mode) || mode === r.mode) return;
+    if (!isHostMember(r, me) || !MODES.includes(mode) || mode === r.mode) return;
     r.mode = mode; setPb(r, { playing: false, time: 0, rate: 1 }); sys(r, `${me.name} switched to ${mode} mode`);
     io.to(r.id).emit('mode:changed', { mode, playback: r.playback });
   });
   on('playback', (r, me, _cb, p) => {
-    if (!p || typeof p !== 'object') return;
+    if (!canControl(r, me) || !p || typeof p !== 'object') return;
     const next = { playing: p.playing === true, time: clamp(p.time, 0, 172800, 0), rate: clamp(p.rate, 0.25, 2, 1) };
     if (r.playback.playing !== next.playing) sys(r, `${me.name} ${next.playing ? 'played' : 'paused'} the video`);
     setPb(r, next); sock.to(r.id).emit('playback', { ...next, from: me.id });
   });
   on('queue:add', (r, me, cb, item) => {
-    if (!item || typeof item.id !== 'string' || !YT_RE.test(item.id)) return;
+    if (!canControl(r, me) || !item || typeof item.id !== 'string' || !YT_RE.test(item.id)) return;
     if (r.queue.length >= MAX_QUEUE) return cb && cb({ error: 'The queue is full.' });
     const v = { id: item.id, title: clean(item.title, 120) || item.id, addedBy: me.id };
     sys(r, `${me.name} added “${v.title.slice(0, 60)}”`);
     if (!r.current) r.current = v; else r.queue.push(v);
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
   });
-  on('queue:remove', (r, _me, _cb, id) => {
-    if (typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
+  on('queue:remove', (r, me, _cb, id) => {
+    if (!canControl(r, me) || typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
   });
-  on('video:change', (r, _me, _cb, item) => {
+  on('video:change', (r, me, _cb, item) => {
+    if (!canControl(r, me)) return;
     const v = item && typeof item.id === 'string' && r.queue.find((q) => q.id === item.id); // only items that are really queued
     if (!v) return; r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); setPb(r, { playing: true, time: 0, rate: 1 });
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback }); // one event, so clients never see a new video with the old time
@@ -243,6 +272,7 @@ io.on('connection', (sock) => {
   /* shared local video: one person uploads straight to the bucket, everyone plays the same file */
   on('file:prepare', (r, me, cb, meta) => {
     if (!cb) return;
+    if (!isHostMember(r, me)) return cb({ error: 'Only the host can share a video.' });
     if (!s3On()) return cb({ error: 'not_configured' });
     const size = Number(meta && meta.size), type = clean(meta && meta.type, 60).toLowerCase();
     if (!Number.isInteger(size) || size < 1) return cb({ error: 'That file looks empty.' });
@@ -267,7 +297,7 @@ io.on('connection', (sock) => {
     if (cb) cb({ ok: true });
   });
   on('file:remove', (r, me) => {
-    if (!r.file || (r.file.byId !== me.id && r.members[0].id !== me.id)) return; // uploader or host
+    if (!r.file || (r.file.byId !== me.id && r.hostPid !== me.id)) return; // uploader or host
     dropFile(r); setPb(r, { playing: false, time: 0, rate: 1 });
     io.to(r.id).emit('file:updated', { file: null, playback: r.playback });
   });
@@ -283,6 +313,7 @@ io.on('connection', (sock) => {
   });
 
   on('browser:start', async (r, me, cb) => {
+    if (!isHostMember(r, me)) return cb && cb({ error: 'Only the host can start the shared browser.' });
     if (r.hb) { if (!r.controller) setController(r, me.id); return cb && cb({ ok: true }); }
     if (r.hbStarting) return cb && cb({ error: 'The browser is already starting.' });
     if (!process.env.HYPERBEAM_API_KEY) return cb && cb({ error: 'The shared browser is not set up on the server.' });
@@ -302,12 +333,13 @@ io.on('connection', (sock) => {
   });
   on('browser:stop', async (r, me) => {
     if (!r.hb) return;
-    if (r.controller && r.controller !== me.id && r.members[0].id !== me.id) return; // controller or host only
+    if (r.controller && r.controller !== me.id && r.hostPid !== me.id) return; // controller or host only
     await stopHb(r);
   });
   on('browser:control', (r, me, cb, c) => {
     if (!r.hb || !c || typeof c !== 'object') return;
-    const host = r.members[0].id === me.id, isCtl = r.controller === me.id;
+    const host = r.hostPid === me.id, isCtl = r.controller === me.id;
+    if (!canControl(r, me)) return;
     if (c.action === 'take') { if (r.controller && !isCtl && !host) return cb && cb({ error: 'Someone else has control.' }); setController(r, me.id); }
     else if (c.action === 'release') { if (isCtl || host) setController(r, null); }
     else if (c.action === 'pass') { const to = isCtl || host ? r.members.find((m) => m.id === c.to) : null; if (to) setController(r, to.id); }
@@ -319,6 +351,7 @@ io.on('connection', (sock) => {
     me.dropTimer = setTimeout(() => { if (!me.sid) removeMember(r, me); }, GRACE_MS);
   });
 });
+setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.now() - r.createdAt > 10 * 60000) { stopHb(r); dropFile(r); rooms.delete(id); } }, 5 * 60000).unref(); // parties nobody ever joined
 server.listen(process.env.PORT || 4000, () => {
   console.log('server up');
   setTimeout(() => storageSelfTest().then((r) => console.log('[storage]', JSON.stringify(r))), 3000);
