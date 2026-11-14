@@ -1,20 +1,22 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import { Info, Maximize2, Users } from 'lucide-react';
+import { Info, MessageCircle, Maximize2, X } from 'lucide-react';
 import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
+import type { SyncState } from '@/components/RoomHeader';
 import { getCid, getPass } from '@/lib/types';
 import { useCall } from '@/lib/useCall';
 import StageYouTube from '@/components/StageYouTube';
 import StageLocalFile from '@/components/StageLocalFile';
 import StageBrowser from '@/components/StageBrowser';
 import { CallAudio, FeedGrid, FloatingFeeds } from '@/components/VideoCallBar';
-import ChatAndQueue from '@/components/ChatAndQueue';
+import ChatPanel from '@/components/ChatPanel';
+import QueuePanel from '@/components/QueuePanel';
+import RoomHeader from '@/components/RoomHeader';
 import JoinGate from '@/components/JoinGate';
 import RoomControls from '@/components/RoomControls';
-import RoomPanel, { type PanelTab } from '@/components/RoomPanel';
-import { Skeleton, StatusPill, cx } from '@/components/ui';
+import { Button, Sheet, Skeleton, cx } from '@/components/ui';
 
 type Layout = 'desktop' | 'portrait' | 'landscape';
 const PANEL_W = 'min(340px, 88vw)';
@@ -110,16 +112,16 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     const f = () => setTouched(true), evs = ['pointerup', 'keydown'];
     evs.forEach((e) => addEventListener(e, f, { passive: true })); return () => evs.forEach((e) => removeEventListener(e, f));
   }, []);
-  const [open, setOpen] = useState(true), [tab, setTab] = useState<PanelTab>('chat'), [unread, setUnread] = useState(0);
+  const [peopleOpen, setPeopleOpen] = useState(false), [queueOpen, setQueueOpen] = useState(false), [leaveOpen, setLeaveOpen] = useState(false);
+  const [drawer, setDrawer] = useState(false), [unread, setUnread] = useState(0); // drawer: the chat slide-over in landscape
   const [floaters, setFloaters] = useState<{ id: string; emoji: string; x: number }[]>([]);
-  const [sync, setSync] = useState<'synced' | 'resyncing' | 'unknown'>('unknown'); const lastReport = useRef(0);
+  const [sync, setSync] = useState<SyncState>('unknown'); const lastReport = useRef(0);
   const call = useCall({ roomId, userName: profile.name, sid: selfId, playing: pb.playing, smartMic });
 
-  useEffect(() => { setOpen(layout !== 'landscape'); }, [layout]);
-  const chatVisible = useRef(false); chatVisible.current = open && tab === 'chat';
-  useEffect(() => { if (open && tab === 'chat') setUnread(0); }, [open, tab]);
+  const chatVisible = layout !== 'landscape' || drawer, visibleRef = useRef(true); visibleRef.current = chatVisible;
+  useEffect(() => { if (chatVisible) setUnread(0); }, [chatVisible]);
   useEffect(() => {
-    const onMsg = (m: { system?: boolean; from: string }) => { if (!m.system && m.from !== selfId && !chatVisible.current) setUnread((n) => n + 1); };
+    const onMsg = (m: { system?: boolean; from: string }) => { if (!m.system && m.from !== selfId && !visibleRef.current) setUnread((n) => n + 1); };
     const onReact = (r: { id: string; emoji: string }) => {
       setFloaters((f) => [...f.slice(-20), { id: r.id, emoji: r.emoji, x: 10 + Math.random() * 80 }]);
       setTimeout(() => setFloaters((f) => f.filter((y) => y.id !== r.id)), 3000);
@@ -133,7 +135,6 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   useEffect(() => { const t = setInterval(() => { if (Date.now() - lastReport.current > 6000) setSync('unknown'); }, 2000); return () => clearInterval(t); }, []);
   useEffect(() => { lastReport.current = 0; setSync('unknown'); }, [state.mode]);
 
-  const toggleTab = (t: 'people' | 'chat') => { if (open && tab === t) setOpen(false); else { setTab(t); setOpen(true); } };
   const invite = async () => { try { await navigator.clipboard.writeText(`${location.origin}/room/${roomId}`); return true; } catch { return false; } };
   const leave = () => { socket.emit('room:leave'); setTimeout(() => socket.disconnect(), 200); router.push('/'); };
   const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
@@ -150,72 +151,67 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {typeof document !== 'undefined' && document.fullscreenEnabled &&
-        <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={cx('absolute right-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-70 transition hover:opacity-100', layout === 'landscape' ? 'top-12' : 'top-2')}><Maximize2 size={16} /></button>}
+        <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={cx('absolute right-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-70 transition hover:opacity-100', layout === 'landscape' ? 'top-24' : 'top-2')}><Maximize2 size={16} /></button>}
       {coarse && !touched && pb.playing && state.mode !== 'browser' &&
         <button onClick={() => { setTouched(true); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
 
-  const netChip = call.state === 'error' ? { ok: false as boolean | null, t: 'Call off', tip: 'Call unavailable' }
-    : call.state === 'joining' ? { ok: null, t: 'Connecting', tip: 'Connecting to the call' }
-    : call.net === 'good' ? { ok: true, t: 'Good', tip: 'Network quality: good' } : call.net === 'low' ? { ok: false, t: 'Weak', tip: 'Network quality: weak' }
-    : call.net === 'very-low' ? { ok: false, t: 'Poor', tip: 'Network quality: poor' } : { ok: null, t: 'Checking', tip: 'Measuring network quality' };
-  const syncChip = sync === 'synced' ? { ok: true as boolean | null, t: 'In sync', tip: 'Playback is in sync' }
-    : sync === 'resyncing' ? { ok: false, t: 'Resyncing', tip: 'Correcting playback drift' } : { ok: null, t: 'Waiting', tip: 'Waiting for the player to report' };
-  const topBar = (
-    <div className="flex items-center gap-2 px-3 py-2">
-      <span className="flex min-w-0 items-center gap-2 text-sm font-semibold"><span className="truncate">Room {roomId}</span>
-        <span className="flex shrink-0 items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs font-medium text-muted"><Users size={12} />{state.members.length}/10</span></span>
-      <div className="ml-auto flex items-center gap-1.5" aria-label="Connection status">
-        <StatusPill compact online={online} label={online ? 'Online' : 'Offline'} title={online ? 'Server connected' : 'Reconnecting to the server'} />
-        <StatusPill compact online={netChip.ok} label={netChip.t} title={netChip.tip} />
-        {state.mode !== 'browser' && <StatusPill compact online={syncChip.ok} label={syncChip.t} title={syncChip.tip} />}</div></div>);
+  const netText = call.state === 'error' ? 'Unavailable' : call.state === 'joining' ? 'Connecting…' : call.net === 'good' ? 'Good' : call.net === 'low' ? 'Weak' : call.net === 'very-low' ? 'Poor' : 'Measuring…';
+  const header = <RoomHeader members={state.members} selfId={selfId} onPeople={() => setPeopleOpen(true)} sync={sync} showSync={state.mode !== 'browser'} onLeave={() => setLeaveOpen(true)} />;
   const controls = (compact?: boolean) => (
     <RoomControls compact={compact} mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
-      panelOpen={open} panelTab={tab} onToggleTab={toggleTab} unread={unread} onReact={(e) => socket.emit('reaction', e)} onInvite={invite}
-      smartMic={smartMic} setSmartMic={setSmartMic} onLeave={leave} isHost={isHost} hostOnly={state.hostOnly} onHostOnly={(v) => socket.emit('room:settings', { hostOnly: v })} />);
-  const panel = (showPeople: boolean) => (
-    <RoomPanel tab={tab} onTab={setTab} unread={unread} queueCount={state.queue.length} peopleCount={state.members.length}
-      people={showPeople ? <FeedGrid members={state.members} parts={call.parts} selfId={selfId} callState={call.state} /> : null}
-      chat={<ChatAndQueue view={tab === 'queue' ? 'queue' : 'chat'} socket={socket} selfId={selfId} chat={state.chat} queue={state.queue} current={state.current} canControl={canControl} />} />);
+      onInvite={invite} onQueue={() => setQueueOpen(true)} queueCount={state.queue.length} smartMic={smartMic} setSmartMic={setSmartMic} netText={netText}
+      isHost={isHost} hostOnly={state.hostOnly} onHostOnly={(v) => socket.emit('room:settings', { hostOnly: v })} />);
+  const chat = <ChatPanel socket={socket} selfId={selfId} chat={state.chat} />;
   const inviteLink = `${location.origin}/room/${roomId}`, canShare = typeof navigator !== 'undefined' && !!navigator.share;
   const shareBanner = isHost && !inviteDismissed && state.members.length <= 1 ? (
-    <div role="region" aria-label="Invite friends" className="mx-2 mt-2 space-y-2 rounded-xl border border-white/10 bg-surface p-3 text-sm">
+    <div role="region" aria-label="Invite friends" className="mx-3 mb-2 space-y-2 rounded-xl border border-white/10 bg-surface p-3 text-sm">
       <div className="flex items-start justify-between gap-2"><p className="font-semibold">Share this link with your friends</p><button aria-label="Dismiss" onClick={() => setInviteDismissed(true)} className="px-1 text-muted">✕</button></div>
       <p className="break-all rounded-lg bg-surface2 px-2.5 py-1.5 text-xs text-muted">{inviteLink}</p>
       <div className="flex gap-2"><button onClick={() => { void invite(); }} className="flex-1 rounded-lg bg-primary py-2 font-semibold text-white">Copy link</button>
         {canShare && <button onClick={() => { navigator.share({ title: 'Join my Vimo party', url: inviteLink }).catch(() => {}); }} className="flex-1 rounded-lg bg-surface2 py-2 font-semibold">Share…</button>}</div></div>) : null;
   const banner = !online && <p role="status" className="bg-accent px-3 py-1 text-center text-sm font-medium text-bg">Reconnecting to the server…</p>;
   const callErr = call.state === 'error'
-    ? <div role="alert" className="mx-2 mt-2 flex items-center justify-between gap-2 rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent"><span>{call.error}</span>
+    ? <div role="alert" className="mx-3 mt-2 flex items-center justify-between gap-2 rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent"><span>{call.error}</span>
         <button onClick={call.retry} className="shrink-0 rounded-lg bg-accent/20 px-2.5 py-1 font-semibold">Retry</button></div>
-    : call.mediaNote ? <p role="status" className="mx-2 mt-2 flex items-start gap-1.5 px-2 text-xs text-muted"><Info size={14} className="mt-px shrink-0 text-accent" />{call.mediaNote}</p>
-    : call.state === 'joined' && !call.mic && !call.cam ? <p className="mx-2 mt-2 px-2 text-xs text-muted">Listening only. Tap the mic or camera to join with audio or video.</p> : null;
+    : call.mediaNote ? <p role="status" className="mx-3 mt-2 flex items-start gap-1.5 px-2 text-xs text-muted"><Info size={14} className="mt-px shrink-0 text-accent" />{call.mediaNote}</p>
+    : call.state === 'joined' && !call.mic && !call.cam ? <p className="mx-3 mt-2 px-2 text-xs text-muted">Listening only. Tap the mic or camera to join with audio or video.</p> : null;
+
+  const sheets = <>
+    <Sheet open={peopleOpen} onClose={() => setPeopleOpen(false)} title={`People (${state.members.length})`}>
+      <FeedGrid members={state.members} parts={call.parts} selfId={selfId} callState={call.state} /></Sheet>
+    <Sheet open={queueOpen} onClose={() => setQueueOpen(false)} title={`Queue (${state.queue.length})`}>
+      <QueuePanel socket={socket} selfId={selfId} queue={state.queue} current={state.current} canControl={canControl} /></Sheet>
+    <Sheet open={leaveOpen} onClose={() => setLeaveOpen(false)} title="Leave the party?">
+      <div className="space-y-3 px-5"><p className="text-sm text-muted">{isHost ? 'You started this party. Friends can stay, but nobody else will be able to control playback if “Only I have control” is on.' : 'You can rejoin any time with the same link.'}</p>
+        <div className="flex gap-2"><Button variant="ghost" onClick={() => setLeaveOpen(false)}>Stay</Button><Button onClick={leave} className="bg-accent text-bg shadow-none hover:bg-accent/90">Leave</Button></div></div></Sheet></>;
 
   let body: React.ReactNode;
   if (layout === 'landscape') body = (
-    <div className="fixed inset-0 h-[100dvh] w-screen overflow-hidden bg-black">
-      <div className="absolute inset-y-0 left-0 transition-[right] duration-300" style={{ right: open ? PANEL_W : 0 }}>
+    <div className="fixed inset-0 h-dvh w-screen overflow-hidden bg-black">
+      <div className="absolute inset-y-0 left-0 transition-[right] duration-300" style={{ right: drawer ? PANEL_W : 0 }}>
         <div className="absolute inset-0">{stage}</div>
-        <div className="absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent">{topBar}{banner}</div>
-        <div className="pointer-events-none absolute inset-x-0 top-11 z-40 flex justify-center"><div className="pointer-events-auto">{controls(true)}</div></div></div>
-      {!open && <FloatingFeeds members={state.members} parts={call.parts} selfId={selfId} callState={call.state} />}
-      <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
-        style={{ width: PANEL_W }} className={cx('fixed right-0 top-0 z-50 h-[100dvh] border-l border-white/10 bg-bg/90 backdrop-blur transition-transform duration-300', open ? 'translate-x-0' : 'translate-x-full')}>
-        {panel(open)}</aside>
-    </div>);
+        <div className="absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent">{banner}{header}</div>
+        <div className="pointer-events-none absolute inset-x-0 top-14 z-40 flex justify-center"><div className="pointer-events-auto">{controls(true)}</div></div></div>
+      {!drawer && <FloatingFeeds members={state.members} parts={call.parts} selfId={selfId} callState={call.state} />}
+      {!drawer && <button onClick={() => setDrawer(true)} aria-label={unread ? `Open chat, ${unread} new` : 'Open chat'} className="fixed right-2 top-1/2 z-40 -translate-y-1/2 rounded-full bg-black/70 p-3 shadow-card">
+        <MessageCircle size={22} />{unread > 0 && <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-center text-[11px] font-bold text-bg">{unread}</span>}</button>}
+      <aside aria-label="Chat" aria-hidden={!drawer} {...({ inert: drawer ? undefined : '' } as Record<string, unknown>)}
+        style={{ width: PANEL_W }} className={cx('fixed right-0 top-0 z-50 h-dvh border-l border-white/10 bg-bg/95 pt-10 transition-transform duration-300', drawer ? 'translate-x-0' : 'translate-x-full')}>
+        <button onClick={() => setDrawer(false)} aria-label="Close chat" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-surface2"><X size={16} /></button>{chat}</aside>
+      {sheets}</div>);
   else if (layout === 'desktop') body = (
-    <div className="bg-cinema flex h-[100dvh] flex-col">{banner}{topBar}{callErr}{shareBanner}
-      <div className="grid min-h-0 flex-1 transition-[grid-template-columns] duration-300 ease-out"
-        style={{ gridTemplateColumns: open ? 'minmax(0,7fr) minmax(0,3fr)' : 'minmax(0,1fr) minmax(0,0fr)' }}>
-        <div className="flex min-h-0 min-w-0 flex-col gap-2 px-2 pb-2">
-          <div className="min-h-0 flex-1 overflow-hidden rounded-card bg-black shadow-card">{stage}</div>{controls()}</div>
-        <aside aria-label="Room panel" aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)} className="min-w-0 overflow-hidden border-l border-white/5">{panel(true)}</aside></div></div>);
+    <div className="bg-cinema grid h-dvh grid-cols-[minmax(0,1fr)_380px] grid-rows-[auto_minmax(0,1fr)]">
+      <div className="col-start-1 row-start-1">{banner}{header}{shareBanner}</div>
+      <div className="col-start-1 row-start-2 flex min-h-0 flex-col gap-3 px-3 pb-3">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-card bg-black shadow-card">{stage}</div>{controls()}{callErr}</div>
+      <aside aria-label="Chat" className="col-start-2 row-span-2 row-start-1 min-h-0 border-l border-white/5 bg-surface/40 pt-3">{chat}</aside>
+      {sheets}</div>);
   else body = (
-    <div className="bg-cinema flex h-[100dvh] flex-col overflow-hidden">{banner}{topBar}{shareBanner}
+    <div className="bg-cinema flex h-dvh flex-col overflow-hidden">{banner}{header}{shareBanner}
       <div className="aspect-video w-full shrink-0 bg-black">{stage}</div>
-      <div className="px-2 pt-3">{controls()}</div>{callErr}
-      <div aria-hidden={!open} {...({ inert: open ? undefined : '' } as Record<string, unknown>)}
-        className={cx('min-h-0 overflow-hidden transition-opacity duration-300', open ? 'mt-2 flex-1 opacity-100' : 'h-0 flex-none opacity-0')}>{panel(true)}</div></div>);
+      <div className="px-3 pt-3">{controls()}</div>{callErr}
+      <div className="min-h-0 flex-1 pt-1">{chat}</div>{sheets}</div>);
   return <><CallAudio parts={call.parts} />{body}</>;
 }
