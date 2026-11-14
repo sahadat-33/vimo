@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Globe, HardDrive, Home, Info, Lock, Settings, Users, Youtube } from 'lucide-react';
+import { Globe, HardDrive, KeyRound, Home, Info, Lock, Settings, Users, Youtube } from 'lucide-react';
 import { SERVER, type Mode, type Profile, clearPass } from '@/lib/types';
+import { createRoom } from '@/lib/party';
 import { Button, Card, Logo, ModeCard, StatusPill, TextField, cx } from './ui';
 
 type View = 'home' | 'settings' | 'about';
@@ -29,7 +30,12 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     return () => { dead = true; clearInterval(t); };
   }, []);
 
-  const start = (m: Mode) => router.push(`/room/${encodeURIComponent(rid())}?mode=${m}`);
+  const [err, setErr] = useState('');
+  const start = async (m: Mode) => { // YouTube and file parties get a setup page; the shared browser starts straight away
+    if (m !== 'browser') return router.push(`/party/new?mode=${m}`);
+    setErr('');
+    try { router.push(`/room/${await createRoom({ mode: 'browser', hostOnly: false })}`); } catch (e) { setErr(e instanceof Error ? e.message : 'Could not start the browser party.'); }
+  };
   const join = (e: React.FormEvent) => {
     e.preventDefault();
     const raw = code.trim();
@@ -54,6 +60,12 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     {NAV.map(({ id, label, Icon }) => <button key={id} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
       className={cx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition', view === id ? 'bg-primary/20 text-secondary' : 'text-muted hover:bg-surface2 hover:text-ink')}><Icon size={18} />{label}</button>)}</nav>;
   const online = health === null ? null : !!health;
+  const joinCard = <form onSubmit={join} className="flex flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 shadow-card">
+    <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/20 text-secondary"><KeyRound /></span>
+    <span className="space-y-1"><span className="block text-lg font-semibold">Have a code?</span><span className="block text-sm leading-relaxed text-muted">Paste an invite link or room code to join a party.</span></span>
+    <div className="mt-auto flex gap-2"><input aria-label="Room code or invite link" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste link or code"
+      className="min-h-[44px] min-w-0 flex-1 rounded-xl border border-white/10 bg-surface2 px-3 text-sm placeholder:text-muted/60 focus:border-secondary" />
+      <Button className="!w-auto px-4" aria-label="Join room"><Users size={18} /></Button></div></form>;
 
   return <div className="bg-cinema min-h-[100dvh] lg:flex">
     <aside className="hidden w-64 shrink-0 flex-col gap-8 border-r border-white/5 bg-bg/60 p-6 lg:flex"><Logo />{nav(false)}
@@ -65,12 +77,13 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
           <div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">Welcome back!</h1><p className="mt-1 text-muted">Pick how you want to watch tonight.</p></div>
           <div className="flex flex-wrap gap-2"><StatusPill online={online} label={online === null ? 'Checking server…' : online ? 'Server online' : 'Server waking up'} />
             <StatusPill online={online ? true : null} label={`${health ? health.people : 0} connected`} /></div></div>
-        <div className="grid gap-4 md:grid-cols-3">
+        {err && <p role="alert" className="text-sm text-accent">{err}</p>}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ModeCard icon={<Youtube />} title="YouTube Watch Party" desc="Paste links, build a queue and watch in perfect sync." tag="Synced playback" onClick={() => start('youtube')} />
           <ModeCard icon={<HardDrive />} title="Share a Video File" desc="One person picks a video, it uploads once, and everyone watches in sync." tag="Upload once" onClick={() => start('file')} />
-          <ModeCard icon={<Globe />} title="Shared Cloud Browser" desc="Browse Netflix, Prime or Disney+ together in one window." tag="Netflix and more" onClick={() => start('browser')} /></div>
-        <Card><form onSubmit={join} className="flex flex-col gap-3 sm:flex-row sm:items-end"><div className="flex-1"><TextField label="Have an invite? Enter a room code or link" value={code} onChange={(e) => setCode(e.target.value)} placeholder="abc123" /></div>
-          <Button variant="ghost" className="sm:w-40"><Users size={18} /> Join room</Button></form></Card></>}
+          <ModeCard icon={<Globe />} title="Shared Cloud Browser" desc="Browse Netflix, Prime or Disney+ together in one window." tag="Netflix and more" onClick={() => start('browser')} />
+          {joinCard}</div>
+      </>}
       {view === 'settings' && <><h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <Card className="max-w-md space-y-4"><form onSubmit={saveName} className="space-y-4"><TextField label="Nickname" value={name} maxLength={20} onChange={(e) => setName(e.target.value)} />
           <Button>{saved ? 'Saved' : 'Save nickname'}</Button></form>

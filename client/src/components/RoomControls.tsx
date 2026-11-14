@@ -8,7 +8,7 @@ type Pop = null | 'react' | 'settings';
 export interface RoomControlsProps {
   mic: boolean; cam: boolean; onMic: () => void; onCam: () => void; callReady: boolean;
   panelOpen: boolean; panelTab: string; onToggleTab: (t: 'people' | 'chat') => void; unread: number;
-  onReact: (e: string) => void; onInvite: () => Promise<boolean>; smartMic: boolean; setSmartMic: (b: boolean) => void; onLeave: () => void; compact?: boolean;
+  onReact: (e: string) => void; onInvite: () => Promise<boolean>; smartMic: boolean; setSmartMic: (b: boolean) => void; onLeave: () => void; compact?: boolean; isHost?: boolean; hostOnly?: boolean; onHostOnly?: (v: boolean) => void;
 }
 /** Room controls only. Playback controls (play, seek, volume, captions) stay in the native player. Reactions live on the Chat button. */
 export default function RoomControls(p: RoomControlsProps) {
@@ -24,7 +24,10 @@ export default function RoomControls(p: RoomControlsProps) {
     {pop === 'settings' && <div role="dialog" aria-label="Room settings" className={cx('absolute right-0 z-50 w-64 rounded-2xl border border-white/10 bg-surface2 p-4 shadow-card', dir)}>
       <div className="flex items-center justify-between gap-3 text-sm"><span>Smart Mic<span className="block text-xs text-muted">Mutes your mic while the video plays</span></span>
         <button role="switch" aria-checked={p.smartMic} aria-label="Smart Mic" onClick={() => p.setSmartMic(!p.smartMic)} className={cx('relative h-6 w-11 shrink-0 rounded-full transition', p.smartMic ? 'bg-primary' : 'bg-surface')}>
-          <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', p.smartMic ? 'left-[22px]' : 'left-0.5')} /></button></div></div>}
+          <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', p.smartMic ? 'left-[22px]' : 'left-0.5')} /></button></div>
+      {p.isHost && p.onHostOnly && <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm"><span>Only I have control<span className="block text-xs text-muted">Friends can’t pause, seek or change the video</span></span>
+        <button role="switch" aria-checked={!!p.hostOnly} aria-label="Only I have control" onClick={() => p.onHostOnly!(!p.hostOnly)} className={cx('relative h-6 w-11 shrink-0 rounded-full transition', p.hostOnly ? 'bg-primary' : 'bg-surface')}>
+          <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', p.hostOnly ? 'left-[22px]' : 'left-0.5')} /></button></div>}</div>}
     <div className={cx('flex items-center justify-between gap-0.5 rounded-2xl border border-white/5 p-1.5 shadow-card min-[380px]:gap-1', p.compact ? 'bg-black/60' : 'bg-surface/90')}>
       <IconButton label={p.mic ? 'Turn microphone off' : 'Turn microphone on'} active={p.mic} disabled={!p.callReady} onClick={p.onMic}>{p.mic ? <Mic size={18} /> : <MicOff size={18} />}</IconButton>
       <IconButton label={p.cam ? 'Turn camera off' : 'Turn camera on'} active={p.cam} disabled={!p.callReady} onClick={p.onCam}>{p.cam ? <Video size={18} /> : <VideoOff size={18} />}</IconButton>

@@ -9,7 +9,7 @@ const beep = () => { try { const a = new AudioContext(), o = a.createOscillator(
 const REACTIONS = ['❤️', '😂', '😱', '🔥', '😭', '🍿'];
 const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export default function ChatAndQueue({ socket, selfId, chat, queue, current, view }: { view?: 'chat' | 'queue'; socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
+export default function ChatAndQueue({ socket, selfId, chat, queue, current, view, canControl = true }: { canControl?: boolean; view?: 'chat' | 'queue'; socket: AppSocket; selfId: string; chat: ChatMessage[]; queue: QueueItem[]; current: QueueItem | null }) {
   const [itab, setTab] = useState<'chat' | 'queue'>('chat'); const tab = view ?? itab;
   const msgs = chat; // the room page owns the history, so it survives reconnects and layout changes
   const [text, setText] = useState(''), [url, setUrl] = useState(''), [err, setErr] = useState('');
@@ -59,10 +59,10 @@ export default function ChatAndQueue({ socket, selfId, chat, queue, current, vie
         {current && <p className="rounded-xl bg-plum px-3 py-2 text-sm">Now playing: {current.title}</p>}
         {queue.length === 0 && <p className="p-2 text-sm text-cream/60">Nothing queued. Paste a link below.</p>}
         {queue.map((q) => <div key={q.id} className="flex items-center gap-2 rounded-xl bg-dusk px-3 py-2 text-sm">
-          <button className="min-w-0 flex-1 truncate text-left" onClick={() => socket.emit('video:change', q)}>{q.title}</button>
-          <button aria-label="Remove" onClick={() => socket.emit('queue:remove', q.id)}><X size={16} /></button></div>)}</div>
-      <form onSubmit={add} className="space-y-1 p-2"><div className="flex gap-2">
+          <button className="min-w-0 flex-1 truncate text-left" onClick={() => canControl && socket.emit('video:change', q)}>{q.title}</button>
+          {canControl && <button aria-label="Remove" onClick={() => socket.emit('queue:remove', q.id)}><X size={16} /></button>}</div>)}</div>
+      {!canControl ? <p className="p-3 text-center text-xs text-muted">Only the host can change the queue.</p> : <form onSubmit={add} className="space-y-1 p-2"><div className="flex gap-2">
         <input className={input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste YouTube link" />
-        <button className="rounded-xl bg-blush px-3 font-semibold text-night">Add</button></div>{err && <p role="alert" className="text-xs text-ember">{err}</p>}</form></>}
+        <button className="rounded-xl bg-blush px-3 font-semibold text-night">Add</button></div>{err && <p role="alert" className="text-xs text-ember">{err}</p>}</form>}</>}
   </div>;
 }
