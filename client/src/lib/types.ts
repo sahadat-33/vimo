@@ -25,12 +25,12 @@ export interface ServerToClient {
   'file:uploading': (d: { by: string; name: string; pct: number }) => void;
   'chat:message': (m: ChatMessage) => void;
   'browser:controller': (id: string | null) => void;
-  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; 'room:settings': (s: { hostOnly: boolean }) => void;
+  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; typing: (t: { id: string; name: string }) => void; 'room:settings': (s: { hostOnly: boolean }) => void;
 }
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
   'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
-  'room:settings': (s: { hostOnly: boolean }) => void; 'call:url': (cb: (r: { url?: string; error?: string }) => void) => void;
+  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; 'call:url': (cb: (r: { url?: string; error?: string }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
   'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
