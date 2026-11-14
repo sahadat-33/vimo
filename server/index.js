@@ -168,7 +168,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call:url': [8, 60000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call:url': [8, 60000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -307,6 +307,7 @@ io.on('connection', (sock) => {
     const m = { id: uid(), from: me.id, name: me.name, avatar: me.avatar, color: me.color, text: t, at: Date.now() };
     r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m);
   });
+  on('typing', (r, me) => { sock.to(r.id).emit('typing', { id: me.id, name: me.name }); }); // lets others show "Sam is typing…"
   on('reaction', (r, me, _cb, emoji) => {
     if (typeof emoji !== 'string' || !EMOJI.has(norm(emoji))) return;
     io.to(r.id).emit('reaction', { id: uid(), emoji, from: me.id });
