@@ -1,6 +1,6 @@
 'use client';
-import { forwardRef, useId, useState } from 'react';
-import { ArrowRight, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
+import { forwardRef, useEffect, useId, useRef, useState } from 'react';
+import { ArrowRight, X, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 
 export const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -50,7 +50,7 @@ export function StatusPill({ online, label, title, compact }: { online: boolean 
 }
 
 export function ModeCard({ icon, title, desc, tag, onClick }: { icon: React.ReactNode; title: string; desc: string; tag: string; onClick: () => void }) {
-  return <button onClick={onClick} className="group flex flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 text-left shadow-card transition hover:-translate-y-0.5 hover:border-secondary/50 hover:shadow-glow">
+  return <button onClick={onClick} className="group flex w-full min-w-0 flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 text-left shadow-card transition hover:-translate-y-0.5 hover:border-secondary/50 hover:shadow-glow">
     <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/20 text-secondary">{icon}</span>
     <span className="space-y-1"><span className="block text-lg font-semibold">{title}</span><span className="block text-sm leading-relaxed text-muted">{desc}</span></span>
     <span className="mt-auto flex items-center justify-between text-sm"><span className="rounded-full bg-surface px-2.5 py-0.5 text-muted">{tag}</span>
@@ -75,4 +75,23 @@ export function TabBar<T extends string>({ tabs, value, onChange, label }: { tab
     {tabs.map((t) => <button key={t.id} role="tab" aria-selected={value === t.id} tabIndex={value === t.id ? 0 : -1} onClick={() => onChange(t.id)}
       className={cx('flex min-h-[40px] flex-1 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition', value === t.id ? 'bg-primary/20 text-secondary' : 'text-muted hover:text-ink')}>
       {t.label}{!!t.badge && <span className="rounded-full bg-accent px-1.5 text-[11px] font-bold text-bg">{t.badge}</span>}</button>)}</div>;
+}
+
+/** Bottom sheet on phones, centred dialog on larger screens. Closes on Escape or a tap outside. */
+export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.activeElement as HTMLElement | null; ref.current?.focus();
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    addEventListener('keydown', k); return () => { removeEventListener('keydown', k); prev?.focus?.(); };
+  }, [open, onClose]);
+  if (!open) return null;
+  return <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center">
+    <button aria-label="Close" tabIndex={-1} onClick={onClose} className="absolute inset-0 cursor-default bg-black/60" />
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}
+      className="relative flex max-h-[85dvh] w-full max-w-md animate-[sheetIn_.2s_ease-out] flex-col rounded-t-3xl border border-white/10 bg-surface shadow-card outline-none sm:rounded-3xl">
+      <div className="flex items-center justify-between px-5 pb-2 pt-4"><h2 className="text-lg font-semibold">{title}</h2>
+        <button aria-label="Close" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-surface2"><X size={18} /></button></div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4">{children}</div></div></div>;
 }

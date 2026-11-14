@@ -60,7 +60,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     {NAV.map(({ id, label, Icon }) => <button key={id} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
       className={cx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition', view === id ? 'bg-primary/20 text-secondary' : 'text-muted hover:bg-surface2 hover:text-ink')}><Icon size={18} />{label}</button>)}</nav>;
   const online = health === null ? null : !!health;
-  const joinCard = <form onSubmit={join} className="flex flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 shadow-card">
+  const joinCard = <form onSubmit={join} className="flex min-w-0 flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 shadow-card">
     <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/20 text-secondary"><KeyRound /></span>
     <span className="space-y-1"><span className="block text-lg font-semibold">Have a code?</span><span className="block text-sm leading-relaxed text-muted">Paste an invite link or room code to join a party.</span></span>
     <div className="mt-auto flex gap-2"><input aria-label="Room code or invite link" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste link or code"
@@ -71,14 +71,14 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     <aside className="hidden w-64 shrink-0 flex-col gap-8 border-r border-white/5 bg-bg/60 p-6 lg:flex"><Logo />{nav(false)}
       <p className="mt-auto text-xs text-muted">Better together.</p></aside>
     <header className="flex items-center justify-between gap-3 border-b border-white/5 p-4 lg:hidden"><Logo size={32} text={false} />{nav(true)}</header>
-    <main className="mx-auto w-full max-w-5xl flex-1 space-y-8 p-5 md:p-8 lg:p-12">
+    <main className="mx-auto w-full min-w-0 max-w-5xl flex-1 space-y-8 p-5 md:p-8 lg:p-12">
       {view === 'home' && <>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">Welcome back!</h1><p className="mt-1 text-muted">Pick how you want to watch tonight.</p></div>
           <div className="flex flex-wrap gap-2"><StatusPill online={online} label={online === null ? 'Checking server…' : online ? 'Server online' : 'Server waking up'} />
             <StatusPill online={online ? true : null} label={`${health ? health.people : 0} connected`} /></div></div>
         {err && <p role="alert" className="text-sm text-accent">{err}</p>}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ModeCard icon={<Youtube />} title="YouTube Watch Party" desc="Paste links, build a queue and watch in perfect sync." tag="Synced playback" onClick={() => start('youtube')} />
           <ModeCard icon={<HardDrive />} title="Share a Video File" desc="One person picks a video, it uploads once, and everyone watches in sync." tag="Upload once" onClick={() => start('file')} />
           <ModeCard icon={<Globe />} title="Shared Cloud Browser" desc="Browse Netflix, Prime or Disney+ together in one window." tag="Netflix and more" onClick={() => start('browser')} />
