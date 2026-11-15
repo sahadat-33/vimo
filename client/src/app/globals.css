@@ -10,3 +10,5 @@ body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-are
 @media (prefers-reduced-motion: reduce) { .animate-pulse, .animate-spin { animation: none } }
 @keyframes sheetIn { from { transform: translateY(24px); opacity: 0 } to { transform: none; opacity: 1 } }
 @media (prefers-reduced-motion: reduce) { [role=dialog] { animation: none !important } }
+@keyframes toastLife { 0% { opacity: 0; transform: translateX(28px) } 9% { opacity: 1; transform: none } 82% { opacity: 1; transform: none } 100% { opacity: 0; transform: none } }
+@media (prefers-reduced-motion: reduce) { [aria-label="New messages"] > div { animation: none !important } }
