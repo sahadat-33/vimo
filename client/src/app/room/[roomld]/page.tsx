@@ -1,12 +1,13 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import { Info, Maximize2, RotateCw, X } from 'lucide-react';
+import { Info, Maximize2 } from 'lucide-react';
 import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
 import type { SyncState } from '@/components/RoomHeader';
 import { getCid, getPass } from '@/lib/types';
 import { useCall } from '@/lib/useCall';
+import { useCinema } from '@/lib/useCinema';
 import StageYouTube from '@/components/StageYouTube';
 import StageLocalFile from '@/components/StageLocalFile';
 import StageBrowser from '@/components/StageBrowser';
@@ -101,8 +102,6 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
   return <RoomView {...{ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }} />;
 }
 
-type Orient = { lock?: (o: string) => Promise<void>; unlock?: () => void };
-const orientation = () => (typeof screen === 'undefined' ? undefined : (screen.orientation as unknown as Orient | undefined));
 
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
@@ -121,29 +120,13 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const call = useCall({ roomId, userName: profile.name, sid: selfId, playing: pb.playing, smartMic });
 
   // ---- Cinema (landscape) mode, phones and tablets only ----
-  // cinema: the phone is held sideways, or the viewer pressed the rotate button. Only the video is shown, plus floating chat toasts and reactions.
-  // forced: rotate button pressed. fs: real fullscreen is on. lockFailed: the browser refused to lock the orientation (iPhone Safari), so we turn the picture ourselves.
+  // Only the video, plus floating chat and reactions. Entered by turning the phone sideways or by the player's OWN fullscreen button
+  // (see useCinema). There are no custom rotate or fullscreen buttons on phones.
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [forced, setForced] = useState(false), [fs, setFs] = useState(false), [lockFailed, setLockFailed] = useState(false);
   const mobile = coarse && layout !== 'desktop';
-  const cinema = mobile && (layout === 'landscape' || forced);
-  const pseudo = mobile && forced && layout === 'portrait' && (!fs || lockFailed); // portrait phone showing a sideways picture
-  useEffect(() => {
-    const onFs = () => {
-      const on = !!document.fullscreenElement; setFs(on);
-      if (!on) { setForced(false); setLockFailed(false); try { orientation()?.unlock?.(); } catch {} } // leaving fullscreen hands rotation back to the phone
-    };
-    document.addEventListener('fullscreenchange', onFs); return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
-  useEffect(() => { if (forced && layout === 'landscape') setForced(false); }, [forced, layout]); // the phone really turned: from here the sensor decides
+  const { fs, pending, enter: enterFullscreen } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
+  const cinema = mobile && (layout === 'landscape' || fs);
   useEffect(() => { if (cinema) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // never leave the keyboard open over the video
-  async function enterFullscreen(lock: boolean) {
-    try { await wrapRef.current?.requestFullscreen({ navigationUI: 'hide' }); } catch {} // not available on iPhone Safari
-    if (!lock) return;
-    try { const o = orientation(); if (!o?.lock) throw new Error('no lock'); await o.lock('landscape'); } catch { setLockFailed(true); }
-  }
-  const rotate = () => { setForced(true); setLockFailed(false); void enterFullscreen(true); };
-  const exitCinema = () => { setForced(false); setLockFailed(false); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); try { orientation()?.unlock?.(); } catch {} };
 
   useEffect(() => {
     const onReact = (r: { id: string; emoji: string }) => {
@@ -175,11 +158,11 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       {!canControl && state.mode !== 'browser' && !cinema && <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted touch-land:hidden">🔒 Host controls playback</span>}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
-      {!cinema && (mobile
-        ? layout === 'portrait' && <button onClick={rotate} aria-label="Watch in landscape" title="Watch in landscape" className={btn}><RotateCw size={16} /></button>
-        : typeof document !== 'undefined' && document.fullscreenEnabled && <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={btn}><Maximize2 size={16} /></button>)}
+      {!mobile && typeof document !== 'undefined' && document.fullscreenEnabled && <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={btn}><Maximize2 size={16} /></button>}
+      {pending && <button aria-label="Tap for fullscreen" onClick={() => { setTouched(true); void enterFullscreen(); }} className="absolute inset-0 z-[15] cursor-default">
+        <span className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[toastLife_2.8s_ease-in-out_forwards] rounded-full bg-black/60 px-3 py-1 text-xs">Tap for fullscreen</span></button>}
       {coarse && !touched && pb.playing && state.mode !== 'browser' &&
-        <button onClick={() => { setTouched(true); if (cinema && !document.fullscreenElement) void enterFullscreen(false); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
+        <button onClick={() => { setTouched(true); void enterFullscreen(); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
 
@@ -223,18 +206,16 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       {sheets}</div>);
   else {
     // Phones and small tablets, portrait and landscape share ONE tree, so the player is never rebuilt when the phone turns (no restart, no lost fullscreen).
-    // `touch-land:` hides everything the instant the browser reports landscape on a touch device; `cinema` does the same for the rotate button.
+    // `touch-land:` hides everything the instant the browser reports landscape on a touch device; `cinema` also covers real fullscreen entered with the player's own button.
     const hide = cx(cinema && 'hidden', 'touch-land:hidden');
-    const outer = cinema || pseudo
+    const outer = cinema
       ? 'fixed inset-0 z-50 h-dvh w-screen overflow-hidden bg-black'
       : 'relative aspect-video w-full shrink-0 bg-black touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen';
-    const inner = pseudo ? 'absolute left-full top-0 h-[100dvw] w-[100dvh] origin-top-left rotate-90' : 'relative h-full w-full';
     body = (
       <div className="bg-cinema flex h-dvh flex-col overflow-hidden">
         <div className={hide}>{banner}{header}{shareBanner}</div>
         <div ref={wrapRef} className={outer}>
-          <div className={inner}>{stage}<ChatToasts socket={socket} selfId={selfId} active={cinema} />
-            {pseudo && <button onClick={exitCinema} aria-label="Exit landscape" className="absolute left-3 top-3 z-40 grid h-10 w-10 place-items-center rounded-full bg-black/60"><X size={18} /></button>}</div></div>
+          <div className="relative h-full w-full">{stage}<ChatToasts socket={socket} selfId={selfId} active={cinema} /></div></div>
         <div className={cx('px-3 pt-3', hide)}>{controls()}</div>
         <div className={hide}>{callErr}</div>
         <div className={cx('min-h-0 flex-1 pt-1', hide)}>{chat}</div>{sheets}</div>);
