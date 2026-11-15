@@ -14,7 +14,7 @@ const orient = () => (typeof screen === 'undefined' ? undefined : (screen.orient
  *  - Turning the phone upright, or leaving fullscreen with the Back gesture, leaves fullscreen and hands rotation back to the phone.
  * `fs` is true while OUR container is the fullscreen element. iPhone Safari has no element fullscreen: there only the layout changes.
  */
-export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boolean, landscape: boolean): { fs: boolean; pending: boolean; enter: () => Promise<boolean> } {
+export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boolean, landscape: boolean): { fs: boolean; pending: boolean; enter: () => Promise<boolean>; tap: () => Promise<void> } {
   const [fs, setFs] = useState(false), [pending, setPending] = useState(false);
   const live = useRef({ landscape, swapTried: false, ours: false });
   live.current.landscape = landscape;
@@ -36,7 +36,12 @@ export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boole
         // We sit on top of the player's own fullscreen. If our level was just closed (Back gesture, turned upright), close the one underneath
         // too, otherwise the user lands in the player's fullscreen and needs a second Back.
         if (live.current.ours) { live.current.ours = false; void document.exitFullscreen().catch(() => {}); return; }
-        if (!live.current.swapTried) { live.current.swapTried = true; if (await enter()) return; } // the player went fullscreen on its own: take it over once
+        if (!live.current.swapTried) {
+          live.current.swapTried = true; if (await enter()) return; // the player went fullscreen on its own: take it over once
+          // The browser would not hand fullscreen to our container. Anything outside the fullscreen element is invisible, and no z-index can
+          // beat that, so the chat bubbles would never show. Step back out of the player's fullscreen and offer one tap that enters OURS.
+          setPending(true); try { await document.exitFullscreen(); } catch {} return;
+        }
       }
       if (!live.current.landscape) { try { void orient()?.lock?.('landscape').catch(() => {}); } catch {} } // entered while upright: turn the screen like a native player
     };
@@ -46,10 +51,12 @@ export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boole
   useEffect(() => { // 2. physical rotation
     if (!enabled) return;
     if (!landscape) { setPending(false); if (document.fullscreenElement === wrapRef.current) void document.exitFullscreen().catch(() => {}); return; } // turned upright
+    if (!document.fullscreenEnabled) { setPending(false); return; } // iPhone Safari: no element fullscreen, so there is nothing to ask for (and no tap shield to block the player)
     let alive = true;
     void enter().then((ok) => { if (alive) setPending(!ok); }); // refused (no recent tap): ask the page to offer a tap target
     return () => { alive = false; };
   }, [landscape, enabled, enter, wrapRef]);
 
-  return { fs, pending, enter };
+  const tap = useCallback(async () => { setPending(false); await enter(); }, [enter]); // the shield was tapped: it goes away whether or not the browser agrees
+  return { fs, pending, enter, tap };
 }
