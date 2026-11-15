@@ -1,5 +1,6 @@
 'use client';
 import { forwardRef, useEffect, useId, useRef, useState } from 'react';
+import { useVisualViewport } from '@/lib/useVisualViewport';
 import { ArrowRight, X, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 
 export const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(' ');
@@ -79,7 +80,7 @@ export function TabBar<T extends string>({ tabs, value, onChange, label }: { tab
 
 /** Bottom sheet on phones, centred dialog on larger screens. Closes on Escape or a tap outside. */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null), vv = useVisualViewport();
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null; ref.current?.focus();
@@ -87,10 +88,10 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     addEventListener('keydown', k); return () => { removeEventListener('keydown', k); prev?.focus?.(); };
   }, [open, onClose]);
   if (!open) return null;
-  return <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center">
+  return <div className={cx('fixed z-[60] flex items-end justify-center sm:items-center', vv.kb ? 'inset-x-0' : 'inset-0')} style={vv.kb ? { top: vv.top, height: vv.height } : undefined}>
     <button aria-label="Close" tabIndex={-1} onClick={onClose} className="absolute inset-0 cursor-default bg-black/60" />
     <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}
-      className="relative flex max-h-[85dvh] w-full max-w-md animate-[sheetIn_.2s_ease-out] flex-col rounded-t-3xl border border-white/10 bg-surface shadow-card outline-none sm:rounded-3xl">
+      className="relative flex max-h-[85%] w-full max-w-md animate-[sheetIn_.2s_ease-out] flex-col rounded-t-3xl border border-white/10 bg-surface shadow-card outline-none sm:rounded-3xl">
       <div className="flex items-center justify-between px-5 pb-2 pt-4"><h2 className="text-lg font-semibold">{title}</h2>
         <button aria-label="Close" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-surface2"><X size={18} /></button></div>
       <div className="min-h-0 flex-1 overflow-y-auto pb-4">{children}</div></div></div>;

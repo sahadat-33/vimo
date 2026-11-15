@@ -52,7 +52,7 @@ export default function ChatPanel({ socket, selfId, chat }: { socket: AppSocket;
         <div className="flex min-w-0 flex-1 items-center rounded-full border border-white/10 bg-surface2 pl-1.5 focus-within:border-secondary">
           <button type="button" aria-label="Send a reaction" aria-haspopup="menu" aria-expanded={emoji} onClick={() => setEmoji(!emoji)}
             className={cx('grid h-10 w-10 shrink-0 place-items-center rounded-full transition', emoji ? 'bg-primary text-white' : 'text-muted hover:text-ink')}><Smile size={22} /></button>
-          <input value={text} onChange={(e) => onChange(e.target.value)} maxLength={500} aria-label="Message" placeholder="Say something…" enterKeyHint="send" autoComplete="off"
+          <input value={text} onChange={(e) => onChange(e.target.value)} onFocus={() => setTimeout(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, 350)} maxLength={500} aria-label="Message" placeholder="Say something…" enterKeyHint="send" autoComplete="off"
             className="min-h-[48px] min-w-0 flex-1 bg-transparent px-2 text-ink outline-none placeholder:text-muted/70" /></div>
         <button aria-label="Send message" className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary text-white shadow-glow transition active:scale-95"><Send size={20} className="-ml-0.5" /></button></form>
     </div></div>;
