@@ -124,7 +124,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   // (see useCinema). There are no custom rotate or fullscreen buttons on phones.
   const wrapRef = useRef<HTMLDivElement>(null);
   const mobile = coarse && layout !== 'desktop';
-  const { fs, pending, enter: enterFullscreen } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
+  const { fs, pending, enter: enterFullscreen, tap } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
   const cinema = mobile && (layout === 'landscape' || fs);
   useEffect(() => { if (cinema) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // never leave the keyboard open over the video
 
@@ -159,10 +159,10 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {!mobile && typeof document !== 'undefined' && document.fullscreenEnabled && <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={btn}><Maximize2 size={16} /></button>}
-      {pending && <button aria-label="Tap for fullscreen" onClick={() => { setTouched(true); void enterFullscreen(); }} className="absolute inset-0 z-[15] cursor-default">
+      {pending && <button aria-label="Tap for fullscreen" onClick={() => { setTouched(true); void tap(); }} className="absolute inset-0 z-[15] cursor-default">
         <span className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[toastLife_2.8s_ease-in-out_forwards] rounded-full bg-black/60 px-3 py-1 text-xs">Tap for fullscreen</span></button>}
       {coarse && !touched && pb.playing && state.mode !== 'browser' &&
-        <button onClick={() => { setTouched(true); void enterFullscreen(); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
+        <button onClick={() => { setTouched(true); if (cinema) void enterFullscreen(); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
 
@@ -215,7 +215,8 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       <div className="bg-cinema flex h-dvh flex-col overflow-hidden">
         <div className={hide}>{banner}{header}{shareBanner}</div>
         <div ref={wrapRef} className={outer}>
-          <div className="relative h-full w-full">{stage}<ChatToasts socket={socket} selfId={selfId} active={cinema} /></div></div>
+          <div className="relative h-full w-full">{stage}</div>
+          <ChatToasts socket={socket} selfId={selfId} active={cinema || fs} /></div>
         <div className={cx('px-3 pt-3', hide)}>{controls()}</div>
         <div className={hide}>{callErr}</div>
         <div className={cx('min-h-0 flex-1 pt-1', hide)}>{chat}</div>{sheets}</div>);
