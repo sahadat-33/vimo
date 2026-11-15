@@ -14,6 +14,7 @@ import StageBrowser from '@/components/StageBrowser';
 import { CallAudio, FeedGrid } from '@/components/VideoCallBar';
 import ChatPanel from '@/components/ChatPanel';
 import ChatToasts from '@/components/ChatToasts';
+import { useVisualViewport } from '@/lib/useVisualViewport';
 import QueuePanel from '@/components/QueuePanel';
 import RoomHeader from '@/components/RoomHeader';
 import JoinGate from '@/components/JoinGate';
@@ -105,7 +106,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
-  const router = useRouter(); const layout = useLayout();
+  const router = useRouter(); const layout = useLayout(); const vvp = useVisualViewport();
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
@@ -207,12 +208,13 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   else {
     // Phones and small tablets, portrait and landscape share ONE tree, so the player is never rebuilt when the phone turns (no restart, no lost fullscreen).
     // `touch-land:` hides everything the instant the browser reports landscape on a touch device; `cinema` also covers real fullscreen entered with the player's own button.
-    const hide = cx(cinema && 'hidden', 'touch-land:hidden');
+    // Keyboard open: keep the video on screen and give the rest of the space to the chat; header and controls step aside until the keyboard closes.
+    const kb = vvp.kb && !cinema, hide = cx((cinema || kb) && 'hidden', 'touch-land:hidden');
     const outer = cinema
       ? 'fixed inset-0 z-50 h-dvh w-screen overflow-hidden bg-black'
       : 'relative aspect-video w-full shrink-0 bg-black touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen';
     body = (
-      <div className="bg-cinema flex h-dvh flex-col overflow-hidden">
+      <div className={cx('bg-cinema flex flex-col overflow-hidden', kb ? 'fixed inset-x-0 z-40' : 'h-dvh')} style={kb ? { top: vvp.top, height: vvp.height } : undefined}>
         <div className={hide}>{banner}{header}{shareBanner}</div>
         <div ref={wrapRef} className={outer}>
           <div className="relative h-full w-full">{stage}</div>
