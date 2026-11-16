@@ -26,10 +26,10 @@ function useLayout(): Layout {
   useEffect(() => {
     // Orientation comes from screen.orientation. innerWidth/innerHeight change when the soft keyboard opens on some Android
     // builds, which flipped a portrait phone into "landscape", so cinema mode hijacked the screen the moment you typed.
-    const isLandscape = () => {
-      const t = (screen as Screen & { orientation?: { type?: string } }).orientation?.type;
-      return t ? t.startsWith('landscape') : innerWidth > innerHeight;
-    };
+    // Match the CSS orientation media query. Android can leave screen.orientation.type
+    // stale after exiting an iframe's native fullscreen session, which kept the room
+    // in its landscape-only layout even after the phone returned upright.
+    const isLandscape = () => matchMedia('(orientation: landscape)').matches;
     const f = () => setL(innerWidth >= 1024 ? 'desktop' : isLandscape() ? 'landscape' : 'portrait');
     const later = () => { f(); setTimeout(f, 150); setTimeout(f, 450); }; // Android reports the new size a moment after rotating
     f(); addEventListener('resize', f); addEventListener('orientationchange', later);
