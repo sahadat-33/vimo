@@ -7,10 +7,10 @@ import { getSocket } from './socket';
 export type CallState = 'joining' | 'joined' | 'error' | 'left';
 export type NetQuality = 'good' | 'low' | 'very-low' | null;
 
-class CallErr extends Error { constructor(public kind: 'network' | 'auth' | 'config' | 'server' | 'timeout' | 'join') { super(kind); } }
+class CallErr extends Error { constructor(public kind: 'network' | 'auth' | 'config' | 'key' | 'server' | 'timeout' | 'join') { super(kind); } }
 const MSG: Record<CallErr['kind'], string> = {
   network: 'Can’t reach the server. Check your connection and retry.', auth: 'Your session expired. Go back and enter the passcode again.',
-  config: 'Video calls aren’t set up on the server yet.', server: 'The call service had a problem. Try again shortly.',
+  config: 'Video calls aren’t set up on the server yet.', key: 'Daily rejected the API key. Check DAILY_API_KEY on Render.', server: 'The call service had a problem. Try again shortly.',
   timeout: 'The call took too long to connect.', join: 'Couldn’t connect to the call.' };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new CallErr('timeout')), ms))]);
@@ -55,7 +55,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
         try {
           const url = await new Promise<string>((res, rej) => { // the server hands the call link only to people who are in the party
             const t = setTimeout(() => rej(new CallErr('network')), 10000);
-            getSocket(roomId).emit('call:url', (r) => { clearTimeout(t); if (r?.url) res(r.url); else rej(new CallErr(r?.error === 'not_configured' ? 'config' : 'server')); });
+            getSocket(roomId).emit('call:url', (r) => { clearTimeout(t); if (r?.url) res(r.url); else rej(new CallErr(r?.error === 'not_configured' ? 'config' : r?.status === 401 || r?.status === 403 ? 'key' : 'server')); });
           });
           await withTimeout(c.join({ url, userName, userData: { sid: sidRef.current }, startAudioOff: true, startVideoOff: true }), 15000);
           return;
@@ -63,7 +63,7 @@ export function useCall({ roomId, userName, sid, playing, smartMic }: { roomId: 
           if (dead) return;
           const kind: CallErr['kind'] = e instanceof CallErr ? e.kind : 'join';
           if (kind === 'timeout') await c.leave().catch(() => {});
-          if (kind === 'auth' || kind === 'config' || i === 2) { setState('error'); setError(MSG[kind]); return; }
+          if (kind === 'auth' || kind === 'config' || kind === 'key' || i === 2) { setState('error'); setError(MSG[kind]); return; }
           await sleep(1500 * (i + 1));
         }
       }
