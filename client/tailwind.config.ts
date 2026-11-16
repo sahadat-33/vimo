@@ -6,4 +6,4 @@ export default { content: ['./src/**/*.{ts,tsx}'], theme: { extend: {
   colors: { ...t, night: t.bg, dusk: t.surface, plum: t.surface2, blush: t.secondary, cream: t.ink, ember: t.accent },
   fontFamily: { sans: ['Poppins', 'system-ui', 'sans-serif'] },
   borderRadius: { card: '20px' },
-  boxShadow: { card: '0 10px 30px -12px rgba(0,0,0,.6)', glow: '0 8px 30px -8px rgba(138,63,187,.5)' } } }, plugins: [plugin(({ addVariant }) => { addVariant('touch-land', '@media (pointer: coarse) and (orientation: landscape)'); })] } satisfies Config;
+  boxShadow: { card: '0 10px 30px -12px rgba(0,0,0,.6)', glow: '0 8px 30px -8px rgba(138,63,187,.5)' } } }, plugins: [plugin(({ addVariant }) => { addVariant('touch-land', '@media (pointer: coarse) and (orientation: landscape) and (min-aspect-ratio: 3/2)'); })] } satisfies Config;
