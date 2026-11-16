@@ -24,19 +24,35 @@ type Layout = 'desktop' | 'portrait' | 'landscape';
 function useLayout(): Layout {
   const [l, setL] = useState<Layout>('portrait');
   useEffect(() => {
-    // Orientation comes from screen.orientation. innerWidth/innerHeight change when the soft keyboard opens on some Android
-    // builds, which flipped a portrait phone into "landscape", so cinema mode hijacked the screen the moment you typed.
-    // Match the CSS orientation media query. Android can leave screen.orientation.type
-    // stale after exiting an iframe's native fullscreen session, which kept the room
-    // in its landscape-only layout even after the phone returned upright.
-    const isLandscape = () => matchMedia('(orientation: landscape)').matches;
-    const f = () => setL(innerWidth >= 1024 ? 'desktop' : isLandscape() ? 'landscape' : 'portrait');
-    const later = () => { f(); setTimeout(f, 150); setTimeout(f, 450); }; // Android reports the new size a moment after rotating
-    f(); addEventListener('resize', f); addEventListener('orientationchange', later);
-    const mq = matchMedia('(orientation: landscape)'); mq.addEventListener?.('change', later);
-    const so = (screen as Screen & { orientation?: EventTarget }).orientation; so?.addEventListener('change', later);
-    window.visualViewport?.addEventListener('resize', f);
-    return () => { removeEventListener('resize', f); removeEventListener('orientationchange', later); mq.removeEventListener?.('change', later); so?.removeEventListener('change', later); window.visualViewport?.removeEventListener('resize', f); };
+    // Use the layout viewport's orientation, not visualViewport dimensions: the
+    // soft keyboard changes the visual viewport and must never trigger cinema mode.
+    // Re-sample after Android's rotation/fullscreen transition has settled.
+    const mq = matchMedia('(orientation: landscape)');
+    const getLayout = (): Layout => innerWidth >= 1024 ? 'desktop' : mq.matches ? 'landscape' : 'portrait';
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    const apply = () => setL(getLayout());
+    const settle = () => {
+      timers.forEach(clearTimeout);
+      apply();
+      timers = [setTimeout(apply, 120), setTimeout(apply, 350), setTimeout(apply, 700)];
+    };
+    apply();
+    addEventListener('resize', apply);
+    addEventListener('orientationchange', settle);
+    mq.addEventListener?.('change', settle);
+    const so = (screen as Screen & { orientation?: EventTarget }).orientation;
+    so?.addEventListener('change', settle);
+    document.addEventListener('fullscreenchange', settle);
+    document.addEventListener('webkitfullscreenchange', settle);
+    return () => {
+      timers.forEach(clearTimeout);
+      removeEventListener('resize', apply);
+      removeEventListener('orientationchange', settle);
+      mq.removeEventListener?.('change', settle);
+      so?.removeEventListener('change', settle);
+      document.removeEventListener('fullscreenchange', settle);
+      document.removeEventListener('webkitfullscreenchange', settle);
+    };
   }, []);
   return l;
 }
@@ -276,12 +292,14 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     // While typing, the header and the control bar step aside and the stage becomes a short preview strip, so the
     // composer, the message feed AND the video all stay above the keyboard at the same time.
     const tight = kb && !cinema;
-    const hide = cx(cinema && 'hidden', !typing && 'touch-land:hidden');
-    const hideChrome = cx((cinema || tight) && 'hidden', !typing && 'touch-land:hidden');
+    // Drive every visibility/position change from the same React cinema state.
+    // CSS orientation-only hiding used to outlive iframe fullscreen transitions,
+    // leaving the header and controls hidden after returning to portrait.
+    const hide = cx(cinema && 'hidden');
+    const hideChrome = cx((cinema || tight) && 'hidden');
     const outer = cinema
       ? 'fixed inset-0 z-50 h-dvh w-screen overflow-hidden bg-black'
-      : cx(tight ? 'h-[38%] max-h-[56.25vw] w-full shrink-0' : 'aspect-video w-full shrink-0', 'relative bg-black',
-        !typing && 'touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen');
+      : cx(tight ? 'h-[38%] max-h-[56.25vw] w-full shrink-0' : 'aspect-video w-full shrink-0', 'relative bg-black');
     body = (
       <div className="room-shell bg-cinema flex flex-col overflow-hidden">
         <div className={hideChrome}>{banner}{header}{shareBanner}</div>
