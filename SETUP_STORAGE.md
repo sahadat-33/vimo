@@ -15,7 +15,9 @@ Vimo's "Local File" mode uploads one video straight from the browser to a privat
 3. Copy the **keyID** and the **applicationKey** immediately. The applicationKey is shown only once.
 
 ## 3. Set CORS (required for browser uploads)
-Bucket → **Bucket Settings → CORS Rules → custom rule** (labels may differ slightly). Use these values:
+**The B2 web page cannot do this.** Its CORS dialog only offers presets ("share with every origin", "with this one origin", and so on), and none of them includes the S3 upload permission (`s3_put`). With a preset, uploads fail in the browser with "couldn't reach storage". The rule has to be set once with the B2 command line tool or with the small script in this repo.
+
+Rule to apply:
 
 ```json
 [
@@ -29,7 +31,21 @@ Bucket → **Bucket Settings → CORS Rules → custom rule** (labels may differ
   }
 ]
 ```
-The upload (PUT) and playback (GET) happen in the browser, so they need CORS. Delete and HEAD-check are done by the server and do not. If you test from another URL (a Vercel preview, for example), add that origin to `allowedOrigins`.
+
+**Option A: the script (no installs).** On a computer, or in a free GitHub Codespace opened on your repo, run from the `server` folder:
+
+```
+B2_KEY_ID=<keyID> B2_APP_KEY=<applicationKey> B2_BUCKET=<bucket name> node setup-cors.js
+```
+The key needs `listBuckets` and `writeBuckets`. Your master application key works. A key limited to one bucket with Read and Write does not have `writeBuckets`, so create the key from Backblaze's **Application Keys** page with "Allow access to all buckets" and the right capabilities, or use the master key just for this one run, then delete or rotate it.
+
+**Option B: the B2 command line tool** (installed and signed in):
+```
+b2 bucket update --cors-rules '[{"corsRuleName":"vimo-upload","allowedOrigins":["https://vimo1.vercel.app"],"allowedOperations":["s3_put","s3_get","s3_head"],"allowedHeaders":["*"],"exposeHeaders":["ETag"],"maxAgeSeconds":3600}]' <bucket name> allPrivate
+```
+On older versions of the tool the command is `b2 update-bucket --corsRules '[...]' <bucket name> allPrivate`.
+
+Afterwards the B2 web page shows "There are 'custom' rules in place". That is expected. Changes take about a minute. If you test from another URL (a Vercel preview, for example), add that origin to `allowedOrigins`. Delete and HEAD-check are done by the server and do not need CORS.
 
 ## 4. Lifecycle rule (cleanup; do not skip)
 B2 keeps every version of a file. When Vimo "deletes" a video, the S3 delete call only **hides** it, and the data keeps using storage until a lifecycle rule removes it. The same rule also cleans up uploads that were never finished or shared.
@@ -59,7 +75,7 @@ Render → your server service → **Environment**:
 | `MAX_UPLOAD_MB` | optional, default `2048`, hard cap `4700` |
 | `CLIENT_ORIGIN` | `https://vimo1.vercel.app` (no trailing slash) |
 
-Existing variables stay as they are: `ROOM_PASSCODE`, `DAILY_API_KEY`, `HYPERBEAM_API_KEY`, `PORT`, optional `HYPERBEAM_PROFILE`. The Vercel variable `NEXT_PUBLIC_SERVER_URL` is unchanged. Save, and Render redeploys.
+Existing variables stay as they are: `ROOM_PASSCODE`, `HYPERBEAM_API_KEY`, `PORT`, optional `HYPERBEAM_PROFILE`. The Vercel variable `NEXT_PUBLIC_SERVER_URL` is unchanged. Save, and Render redeploys.
 
 Safety net: if `S3_ENDPOINT` is a Backblaze endpoint, the server takes the region from the endpoint itself and logs a warning when `S3_REGION` disagrees, because signing with the wrong region always fails.
 
@@ -75,3 +91,15 @@ Safety net: if `S3_ENDPOINT` is a Backblaze endpoint, the server takes the regio
 3. Click **Remove video** in the app. In Browse Files, the file should show as hidden.
 4. If the upload fails in the browser console with a CORS error, recheck step 3. If it fails with a signature error, recheck `S3_REGION`, the keyID and applicationKey, and that the key is restricted to the right bucket.
 5. Check the Render logs for the line `S3_REGION is "…" but the Backblaze endpoint says "…"`. If it appears, fix `S3_REGION`.
+
+## If the upload fails
+The app now shows the real reason under the picker, and the server tests the bucket itself.
+
+1. Open `https://<your-render-url>/health?storage=1` in a browser (it re-runs the test at most once every 30 seconds). Look at the `storage` part:
+   - `"ok": true` with upload, download and delete all `ok`: the region, keys, bucket and signing are right. Any remaining failure is browser CORS (step 3 of the setup).
+   - `"code": "SignatureDoesNotMatch"` or `"InvalidAccessKeyId"`: wrong `S3_REGION`, keyID or applicationKey.
+   - `"code": "AccessDenied"` or `"NoSuchBucket"`: the key is restricted to a different bucket, or `S3_BUCKET` is misspelled.
+   - `"error": "network"`: the endpoint URL is wrong.
+   - `"configured": false`: one of the `S3_*` variables is missing on Render.
+2. The same result is printed in the Render logs as `[storage] {...}` about 3 seconds after each start.
+3. In the app: "The browser couldn't reach storage…" means CORS (the bucket must allow PUT from `https://vimo1.vercel.app`). "Storage refused the upload (HTTP 403, …)" means the keys, region or bucket.
