@@ -22,10 +22,13 @@ import RoomControls from '@/components/RoomControls';
 import { Button, Sheet, Skeleton, cx } from '@/components/ui';
 
 type Layout = 'desktop' | 'portrait' | 'landscape';
+// Decided by how the phone is held, not by the size of the page: an open keyboard shrinks the page height, and that must never look like landscape
+// (it used to switch to the video-only view and close the keyboard the moment it opened).
+const isLandscape = () => { const t = (screen.orientation as unknown as { type?: string } | undefined)?.type; return t ? t.startsWith('landscape') : screen.width > screen.height; };
 function useLayout(): Layout {
   const [l, setL] = useState<Layout>('portrait');
   useEffect(() => {
-    const f = () => setL(innerWidth >= 1024 ? 'desktop' : innerWidth > innerHeight ? 'landscape' : 'portrait');
+    const f = () => setL(innerWidth >= 1024 ? 'desktop' : isLandscape() ? 'landscape' : 'portrait');
     const later = () => { f(); setTimeout(f, 150); setTimeout(f, 450); }; // Android reports the new size a moment after rotating
     f(); addEventListener('resize', f); addEventListener('orientationchange', later);
     const mq = matchMedia('(orientation: landscape)'); mq.addEventListener?.('change', later);
@@ -106,7 +109,8 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
-  const router = useRouter(); const layout = useLayout(); const vvp = useVisualViewport();
+  const router = useRouter(); const rawLayout = useLayout(); const vvp = useVisualViewport();
+  const layout: Layout = rawLayout === 'landscape' && vvp.kb ? 'portrait' : rawLayout; // second safeguard: with the keyboard open the phone is upright, whatever the page height says
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
@@ -127,7 +131,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const mobile = coarse && layout !== 'desktop';
   const { fs, pending, enter: enterFullscreen, tap } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
   const cinema = mobile && (layout === 'landscape' || fs);
-  useEffect(() => { if (cinema) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // never leave the keyboard open over the video
+  useEffect(() => { if (cinema && !vvp.kb) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // eslint-disable-line // never leave the keyboard open over the video
 
   useEffect(() => {
     const onReact = (r: { id: string; emoji: string }) => {
