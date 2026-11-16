@@ -7,7 +7,7 @@ const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
 const sha = (x) => crypto.createHash('sha256').update(x).digest();
 const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
 const origin = (process.env.CLIENT_ORIGIN || '').replace(/\/+$/, '') || '*'; // tolerate a trailing slash in the env var
-const MAX = 10, MAX_ROOMS = 200, GRACE_MS = 15000, MAX_QUEUE = 50;
+const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = 15000, MAX_QUEUE = 50;
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
 const norm = (e) => String(e).replace(/\uFE0F/g, '');
@@ -30,7 +30,7 @@ app.disable('x-powered-by'); app.set('trust proxy', 1);
 app.use((_q, s, n) => { s.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); n(); });
 app.use(cors({ origin })); app.use(express.json({ limit: '10kb' }));
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin }, maxHttpBufferSize: 20000,
+const io = new Server(server, { cors: { origin }, maxHttpBufferSize: 100000,
   allowRequest: (req, cb) => cb(null, origin === '*' || !req.headers.origin || req.headers.origin === origin) });
 
 
@@ -78,8 +78,7 @@ async function storageSelfTest() {
   out.ok = out.steps.length === 3 && out.steps.every((x) => x.ok);
   return (lastStorage = out);
 }
-/* Service check: do Daily and Hyperbeam accept the keys set on Render? Shown (no secrets) at /health, and logged at boot.
-   Daily: listing rooms needs a valid key (200). Hyperbeam: asking for a VM that does not exist answers 404 when the key is accepted, 401/403 when not (this one is an inference, not documented). */
+/* Service check: verify the optional Hyperbeam browser provider without exposing credentials. */
 let lastServices = {}, lastSvcAt = 0;
 async function servicesCheck() {
   lastSvcAt = Date.now();
@@ -88,11 +87,8 @@ async function servicesCheck() {
     try { const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }); const ok = accepted(res.status); return { configured: true, ok, status: res.status, ...(ok ? {} : { note: res.status === 401 || res.status === 403 ? 'key rejected' : res.status === 400 ? 'inconclusive: request rejected before the key was checked' : 'unexpected answer' }) }; }
     catch (e) { return { configured: true, ok: false, error: e && e.name === 'TimeoutError' ? 'timeout' : 'network' }; }
   };
-  const [daily, hyperbeam] = await Promise.all([
-    probe('https://api.daily.co/v1/rooms?limit=1', process.env.DAILY_API_KEY, (st) => st === 200),
-    probe('https://engine.hyperbeam.com/v0/vm/00000000-0000-0000-0000-000000000000', process.env.HYPERBEAM_API_KEY, (st) => st === 404),
-  ]);
-  return (lastServices = { daily, hyperbeam });
+  const hyperbeam = await probe('https://engine.hyperbeam.com/v0/vm/00000000-0000-0000-0000-000000000000', process.env.HYPERBEAM_API_KEY, (st) => st === 404);
+  return (lastServices = { hyperbeam });
 }
 const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r.file.type, by: r.file.by, url: presign('GET', r.file.key, 12 * 3600) };
 
@@ -100,7 +96,7 @@ const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r
 const rooms = new Map();
 const room = (id) => {
   if (!rooms.has(id)) rooms.set(id, { id, mode: 'youtube', queue: [], current: null, playback: { playing: false, time: 0, rate: 1 },
-    chat: [], hb: null, hbStarting: false, daily: null, dailyAt: 0, controller: null, members: [], file: null, pending: new Map(), pbAt: Date.now(), hostPid: null, hostOnly: false, createdAt: Date.now() });
+    chat: [], hb: null, hbStarting: false, callPeers: new Map(), controller: null, members: [], file: null, pending: new Map(), pbAt: Date.now(), hostPid: null, hostOnly: false, createdAt: Date.now() });
   return rooms.get(id);
 };
 const pubMember = (m) => ({ id: m.id, name: m.name, avatar: m.avatar, color: m.color });
@@ -130,7 +126,8 @@ async function stopHb(r) {
     headers: { Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` }, signal: AbortSignal.timeout(10000) }).catch(() => {});
 }
 function removeMember(r, me) {
-  clearTimeout(me.dropTimer); r.members = r.members.filter((m) => m !== me);
+  clearTimeout(me.dropTimer);
+  for (const [sid, peer] of r.callPeers) if (peer.memberId === me.id) { r.callPeers.delete(sid); io.to(r.id).emit('call-peer-left', { socketId: sid }); } r.members = r.members.filter((m) => m !== me);
   io.to(r.id).emit('peer:left', me.id); sys(r, `${me.name} left`);
   if (r.controller === me.id) setController(r, null);
   if (!r.members.length) setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length) { stopHb(x); dropFile(x); rooms.delete(x.id); } }, 60000);
@@ -152,24 +149,6 @@ const guard = (q, s, n) => {
   if (blocked(q.ip)) return s.status(429).json({ error: 'too_many' });
   if (ok(q.get('x-passcode'))) return n(); noteFail(q.ip); s.status(401).json({ error: 'bad passcode' });
 };
-function dailyUrl(r) { // one Daily room per party, shared by everyone in it
-  if (r.daily && Date.now() - r.dailyAt < 5.5 * 3600000) return Promise.resolve(r.daily);
-  if (!process.env.DAILY_API_KEY) return Promise.reject(Object.assign(new Error('not configured'), { code: 'not_configured' }));
-  return (r.dailyP = r.dailyP || (async () => {
-    try {
-      const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST', signal: AbortSignal.timeout(10000),
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DAILY_API_KEY}` },
-        body: JSON.stringify({ properties: { max_participants: MAX, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
-      if (!res.ok) throw Object.assign(new Error(`daily ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`), { status: res.status });
-      r.daily = (await res.json()).url; r.dailyAt = Date.now(); return r.daily;
-    } catch (e) { console.error('daily error:', e.message); throw Object.assign(new Error('daily failed'), { code: 'daily_failed', status: e.status }); }
-  })().finally(() => { r.dailyP = null; }));
-}
-app.post('/api/daily/:roomId', guard, async (q, s) => { // kept for compatibility; the app now asks over the socket (call:url)
-  const r = ROOM_RE.test(q.params.roomId) ? rooms.get(q.params.roomId) : null;
-  if (!r || !r.members.length) return s.status(404).json({ error: 'no_room' });
-  try { s.json({ url: await dailyUrl(r) }); } catch (e) { s.status(e.code === 'not_configured' ? 503 : 502).json({ error: e.code || 'daily_failed' }); }
-});
 
 /* ---------- sockets ---------- */
 io.use((sock, next) => {
@@ -185,7 +164,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call:url': [8, 60000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -249,8 +228,36 @@ io.on('connection', (sock) => {
     r.hostOnly = s.hostOnly; sys(r, s.hostOnly ? `${me.name} is now the only one in control` : `${me.name} gave everyone playback control`);
     io.to(r.id).emit('room:settings', { hostOnly: r.hostOnly });
   });
-  on('call:url', async (r, _me, cb) => { if (!cb) return; try { cb({ url: await dailyUrl(r) }); } catch (e) { cb({ error: e.code || 'daily_failed', status: e.status }); } });
-  on('room:leave', (r, me) => { removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
+  // WebRTC signaling is room-scoped: only live members may join the call or relay SDP/ICE.
+  on('call-join', (r, me, cb, status = {}) => {
+    if (!status || typeof status !== 'object') return cb && cb({ error: 'Invalid call status.' });
+    const mic = status.mic === true, cam = status.cam === true;
+    const activeCameras = [...r.callPeers.values()].filter((p) => p.cam && p.socketId !== sock.id).length;
+    if (cam && activeCameras >= MAX_CALL_CAMERAS) return cb && cb({ error: 'Camera limit reached. Up to 3 cameras can be active at once; you can still join with audio.' });
+    const peers = [...r.callPeers.values()].filter((p) => p.socketId !== sock.id).map((p) => ({ socketId: p.socketId, memberId: p.memberId, name: p.name, mic: p.mic, cam: p.cam }));
+    const peer = { socketId: sock.id, memberId: me.id, name: me.name, mic, cam, updatedAt: Date.now() };
+    r.callPeers.set(sock.id, peer);
+    sock.to(r.id).emit('call-peer-joined', peer);
+    if (cb) cb({ ok: true, peers });
+  });
+  on('call-leave', (r, _me) => {
+    if (!r.callPeers.has(sock.id)) return;
+    r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id });
+  });
+  const relaySignal = (event) => on(event, (r, _me, cb, payload) => {
+    if (!payload || typeof payload !== 'object' || typeof payload.target !== 'string' || payload.target.length > 80) return;
+    const target = r.callPeers.get(payload.target);
+    if (!target || target.socketId === sock.id) return cb && cb({ error: 'Peer is no longer in this call.' });
+    const data = payload.data;
+    if (!data || typeof data !== 'object' || JSON.stringify(data).length > 12000) return cb && cb({ error: 'Invalid signaling payload.' });
+    if ((event === 'webrtc-offer' || event === 'webrtc-answer') &&
+        (!['offer', 'answer'].includes(data.type) || typeof data.sdp !== 'string' || data.sdp.length > 10000)) return cb && cb({ error: 'Invalid session description.' });
+    if (event === 'webrtc-ice-candidate' && (typeof data.candidate !== 'string' || data.candidate.length > 4000)) return cb && cb({ error: 'Invalid ICE candidate.' });
+    io.to(target.socketId).emit(event, { from: sock.id, data });
+    if (cb) cb({ ok: true });
+  });
+  relaySignal('webrtc-offer'); relaySignal('webrtc-answer'); relaySignal('webrtc-ice-candidate');
+  on('room:leave', (r, me) => { if (r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); } removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
   on('mode:set', (r, me, _cb, mode) => {
     if (!isHostMember(r, me) || !MODES.includes(mode) || mode === r.mode) return;
     r.mode = mode; setPb(r, { playing: false, time: 0, rate: 1 }); sys(r, `${me.name} switched to ${mode} mode`);
@@ -364,7 +371,9 @@ io.on('connection', (sock) => {
   });
 
   sock.on('disconnect', () => {
-    const r = sock.data.roomId && rooms.get(sock.data.roomId); const me = r && r.members.find((m) => m.sid === sock.id);
+    const r = sock.data.roomId && rooms.get(sock.data.roomId);
+    if (r && r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); }
+    const me = r && r.members.find((m) => m.sid === sock.id);
     if (!me) return; me.sid = null; // grace period so brief drops and reconnects do not flicker or duplicate
     me.dropTimer = setTimeout(() => { if (!me.sid) removeMember(r, me); }, GRACE_MS);
   });
