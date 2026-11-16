@@ -45,6 +45,7 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
   };
 
   useEffect(() => { apply(); }, [playback]); // eslint-disable-line
+  useEffect(() => { const resume = () => { if (document.visibilityState === 'visible') apply(); }; document.addEventListener('visibilitychange', resume); window.addEventListener('pageshow', resume); return () => { document.removeEventListener('visibilitychange', resume); window.removeEventListener('pageshow', resume); }; }, []); // eslint-disable-line
   useEffect(() => { // first tap: restore sound
     if (interacted && forcedMute.current && vid.current) { vid.current.muted = false; forcedMute.current = false; }
     apply();
