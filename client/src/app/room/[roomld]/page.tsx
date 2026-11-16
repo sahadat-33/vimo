@@ -14,7 +14,6 @@ import StageBrowser from '@/components/StageBrowser';
 import { CallAudio, FeedGrid } from '@/components/VideoCallBar';
 import ChatPanel from '@/components/ChatPanel';
 import ChatToasts from '@/components/ChatToasts';
-import { useVisualViewport } from '@/lib/useVisualViewport';
 import QueuePanel from '@/components/QueuePanel';
 import RoomHeader from '@/components/RoomHeader';
 import JoinGate from '@/components/JoinGate';
@@ -22,12 +21,15 @@ import RoomControls from '@/components/RoomControls';
 import { Button, Sheet, Skeleton, cx } from '@/components/ui';
 
 type Layout = 'desktop' | 'portrait' | 'landscape';
-// Decided by how the phone is held, not by the size of the page: an open keyboard shrinks the page height, and that must never look like landscape
-// (it used to switch to the video-only view and close the keyboard the moment it opened).
-const isLandscape = () => { const t = (screen.orientation as unknown as { type?: string } | undefined)?.type; return t ? t.startsWith('landscape') : screen.width > screen.height; };
 function useLayout(): Layout {
   const [l, setL] = useState<Layout>('portrait');
   useEffect(() => {
+    // Orientation comes from screen.orientation. innerWidth/innerHeight change when the soft keyboard opens on some Android
+    // builds, which flipped a portrait phone into "landscape", so cinema mode hijacked the screen the moment you typed.
+    const isLandscape = () => {
+      const t = (screen as Screen & { orientation?: { type?: string } }).orientation?.type;
+      return t ? t.startsWith('landscape') : innerWidth > innerHeight;
+    };
     const f = () => setL(innerWidth >= 1024 ? 'desktop' : isLandscape() ? 'landscape' : 'portrait');
     const later = () => { f(); setTimeout(f, 150); setTimeout(f, 450); }; // Android reports the new size a moment after rotating
     f(); addEventListener('resize', f); addEventListener('orientationchange', later);
@@ -37,6 +39,35 @@ function useLayout(): Layout {
     return () => { removeEventListener('resize', f); removeEventListener('orientationchange', later); mq.removeEventListener?.('change', later); so?.removeEventListener('change', later); window.visualViewport?.removeEventListener('resize', f); };
   }, []);
   return l;
+}
+/** Phones shrink the VISUAL viewport, not the layout viewport, for the soft keyboard. The room therefore takes its height
+ *  from visualViewport (published as --vvh) instead of 100dvh, and reports whether the keyboard is currently open so the
+ *  layout can step aside instead of pushing the composer out of sight. */
+function useViewportHeight(): boolean {
+  const [kb, setKb] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    let tallest = 0;
+    const apply = () => {
+      const h = Math.round(vv ? vv.height : innerHeight);
+      if (h > tallest) tallest = h; // remember the keyboard-free height
+      document.documentElement.style.setProperty('--vvh', `${h}px`);
+      setKb(tallest - h > 130); // a keyboard is open (not just browser chrome collapsing)
+      if (window.scrollY) window.scrollTo(0, 0); // the room page must never scroll
+    };
+    apply();
+    vv?.addEventListener('resize', apply);
+    vv?.addEventListener('scroll', apply);
+    addEventListener('resize', apply);
+    addEventListener('orientationchange', apply);
+    return () => {
+      vv?.removeEventListener('resize', apply);
+      vv?.removeEventListener('scroll', apply);
+      removeEventListener('resize', apply);
+      removeEventListener('orientationchange', apply);
+    };
+  }, []);
+  return kb;
 }
 export default function Room() {
   // Resolve the room ID from the route parameter, with a pathname fallback
@@ -109,8 +140,8 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
-  const router = useRouter(); const rawLayout = useLayout(); const vvp = useVisualViewport();
-  const layout: Layout = rawLayout === 'landscape' && vvp.kb ? 'portrait' : rawLayout; // second safeguard: with the keyboard open the phone is upright, whatever the page height says
+  const router = useRouter(); const layout = useLayout();
+  const kb = useViewportHeight(); // true while the soft keyboard is open
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
@@ -131,7 +162,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const mobile = coarse && layout !== 'desktop';
   const { fs, pending, enter: enterFullscreen, tap } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
   const cinema = mobile && (layout === 'landscape' || fs);
-  useEffect(() => { if (cinema && !vvp.kb) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // eslint-disable-line // never leave the keyboard open over the video
+  useEffect(() => { if (cinema) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // never leave the keyboard open over the video
 
   useEffect(() => {
     const onReact = (r: { id: string; emoji: string }) => {
@@ -212,19 +243,23 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   else {
     // Phones and small tablets, portrait and landscape share ONE tree, so the player is never rebuilt when the phone turns (no restart, no lost fullscreen).
     // `touch-land:` hides everything the instant the browser reports landscape on a touch device; `cinema` also covers real fullscreen entered with the player's own button.
-    // Keyboard open: keep the video on screen and give the rest of the space to the chat; header and controls step aside until the keyboard closes.
-    const kb = vvp.kb && !cinema, hide = cx((cinema || kb) && 'hidden', 'touch-land:hidden');
+    // While typing, the header and the control bar step aside and the stage becomes a short preview strip, so the
+    // composer, the message feed AND the video all stay above the keyboard at the same time.
+    const tight = kb && !cinema;
+    const hide = cx(cinema && 'hidden', 'touch-land:hidden');
+    const hideChrome = cx((cinema || tight) && 'hidden', 'touch-land:hidden');
     const outer = cinema
       ? 'fixed inset-0 z-50 h-dvh w-screen overflow-hidden bg-black'
-      : 'relative aspect-video w-full shrink-0 bg-black touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen';
+      : cx(tight ? 'h-24 w-full shrink-0' : 'aspect-video w-full shrink-0',
+        'relative bg-black touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen');
     body = (
-      <div className={cx('bg-cinema flex flex-col overflow-hidden', kb ? 'fixed inset-x-0 z-40' : 'h-dvh')} style={kb ? { top: vvp.top, height: vvp.height } : undefined}>
-        <div className={hide}>{banner}{header}{shareBanner}</div>
+      <div className="room-shell bg-cinema flex flex-col overflow-hidden">
+        <div className={hideChrome}>{banner}{header}{shareBanner}</div>
         <div ref={wrapRef} className={outer}>
           <div className="relative h-full w-full">{stage}</div>
           <ChatToasts socket={socket} selfId={selfId} active={cinema || fs} /></div>
-        <div className={cx('px-3 pt-3', hide)}>{controls()}</div>
-        <div className={hide}>{callErr}</div>
+        <div className={cx('px-3 pt-3', hideChrome)}>{controls()}</div>
+        <div className={hideChrome}>{callErr}</div>
         <div className={cx('min-h-0 flex-1 pt-1', hide)}>{chat}</div>{sheets}</div>);
   }
   return <><CallAudio parts={call.parts} />{body}</>;
