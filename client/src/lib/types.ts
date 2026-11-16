@@ -5,7 +5,8 @@ export interface LocalPlayback extends Playback { at: number } // at = Date.now(
 export interface QueueItem { id: string; title: string; addedBy: string }
 export interface Profile { name: string; avatar: string; color: string }
 export interface Member extends Profile { id: string }
-export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean }
+export interface ChatReply { id: string; senderName: string; text: string }
+export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean; replyTo?: ChatReply }
 export interface HbInfo { embedUrl: string }
 export interface RoomFile { name: string; size: number; type: string; by: string; url: string } // url is a short-lived signed link to the shared video
 export interface JoinProfile extends Profile { cid: string }
@@ -43,7 +44,7 @@ export interface ClientToServer {
   'webrtc-ice-candidate': (p: { target: string; data: RTCIceCandidateInit }) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
-  'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
+  'chat:send': (message: { text: string; replyToId?: string } | string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
   'file:prepare': (m: { name: string; type: string; size: number }, cb: (r: { error?: string; uploadUrl?: string; key?: string; maxBytes?: number }) => void) => void;
   'file:progress': (pct: number) => void; 'file:remove': () => void;
   'file:ready': (key: string, cb: (r: { ok?: boolean; error?: string }) => void) => void;
