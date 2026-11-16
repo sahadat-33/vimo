@@ -1,16 +1,20 @@
 'use client';
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitIsFullScreen?: boolean;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+};
+
 /**
- * Mobile cinema layout is driven by the device's actual orientation. We deliberately
- * do NOT replace a YouTube iframe's native fullscreen session with a fullscreen
- * request on our wrapper: that request runs from `fullscreenchange`, where Android
- * browsers may have already discarded the user's activation. Taking over there was
- * the source of the extra "Tap for fullscreen" prompt and stuck fullscreen states.
- *
- * Physical rotation still gets the one-tap hint. The hint simply dismisses on tap;
- * YouTube's own fullscreen button remains responsible for entering/exiting its native
- * fullscreen mode. The wrapper also recognizes fullscreen on any descendant player.
+ * Tracks fullscreen owned by the video player without trying to steal its user
+ * gesture. YouTube's iframe may be exposed as the fullscreen element on Chrome;
+ * WebKit browsers use prefixed fullscreen events/properties. Both paths are
+ * observed so the room can restore its normal chrome as soon as fullscreen ends.
  */
 export function useCinema(
   wrapRef: RefObject<HTMLElement | null>,
@@ -19,46 +23,76 @@ export function useCinema(
 ): { fs: boolean; pending: boolean; enter: () => Promise<boolean>; tap: () => Promise<void> } {
   const [fs, setFs] = useState(false);
   const [pending, setPending] = useState(false);
+
   const enter = useCallback(async (): Promise<boolean> => {
-    // Do not call requestFullscreen here. Native player controls (especially the
-    // cross-origin YouTube iframe) must own their fullscreen user gesture.
+    // Do not call requestFullscreen here. YouTube's native control must retain
+    // the original tap/user activation, especially inside its cross-origin iframe.
     setPending(false);
     return !!wrapRef.current;
   }, [wrapRef]);
 
   useEffect(() => {
-    if (!enabled) return;
-    const update = () => {
-      const el = wrapRef.current;
-      const active = document.fullscreenElement;
-      const inside = !!el && !!active && (active === el || el.contains(active));
-      setFs(inside);
-      if (inside || !active) setPending(false);
+    if (!enabled) {
+      setFs(false);
+      setPending(false);
+      return;
+    }
+
+    const doc = document as FullscreenDocument;
+    const isInside = () => {
+      const wrap = wrapRef.current;
+      const active = doc.fullscreenElement || doc.webkitFullscreenElement || null;
+      if (wrap && active && (active === wrap || wrap.contains(active))) return true;
+      // Older WebKit reports a boolean rather than the active element.
+      return !!(wrap && doc.webkitIsFullScreen && wrap.querySelector('video, iframe'));
     };
-    document.addEventListener('fullscreenchange', update);
+    const update = () => {
+      const active = isInside();
+      setFs(active);
+      if (active || !(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitIsFullScreen)) {
+        setPending(false);
+      }
+    };
+
+    const events = ['fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen', 'webkitendfullscreen'];
+    events.forEach((event) => document.addEventListener(event, update, true));
+    // Android Chrome sometimes dispatches the fullscreen event before the final
+    // viewport resize. Recheck after resize/pageshow to avoid stale cinema state.
+    window.addEventListener('resize', update);
+    window.addEventListener('pageshow', update);
     update();
-    return () => document.removeEventListener('fullscreenchange', update);
+    return () => {
+      events.forEach((event) => document.removeEventListener(event, update, true));
+      window.removeEventListener('resize', update);
+      window.removeEventListener('pageshow', update);
+    };
   }, [enabled, wrapRef]);
 
   useEffect(() => {
     if (!enabled) return;
+    const doc = document as FullscreenDocument;
     const activeInside = () => {
-      const el = wrapRef.current;
-      const active = document.fullscreenElement;
-      return !!el && !!active && (active === el || el.contains(active));
+      const wrap = wrapRef.current;
+      const active = doc.fullscreenElement || doc.webkitFullscreenElement || null;
+      return !!wrap && !!active && (active === wrap || wrap.contains(active));
     };
 
     if (landscape) {
-      // If the player already entered native fullscreen, don't put a tap shield
-      // over its controls. Otherwise retain the familiar one-tap landscape hint.
-      setPending(!activeInside() && !!document.fullscreenEnabled);
+      // Manual rotation keeps the familiar one-tap hint, unless the player has
+      // already entered fullscreen through its own native controls.
+      setPending(!activeInside() && !doc.webkitIsFullScreen);
       return;
     }
 
     setPending(false);
-    // If the device is turned upright while the player is fullscreen, close that
-    // player fullscreen session as well so the normal room chrome is restored.
-    if (activeInside()) void document.exitFullscreen().catch(() => {});
+    // If the phone is rotated upright while the room wrapper itself is fullscreen,
+    // exit it. Never call exitFullscreen for a fullscreen element outside this room.
+    if (activeInside()) {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+      else if (doc.webkitExitFullscreen) {
+        try { void Promise.resolve(doc.webkitExitFullscreen()).catch(() => {}); } catch {}
+      }
+    }
   }, [landscape, enabled, wrapRef]);
 
   const tap = useCallback(async () => {
