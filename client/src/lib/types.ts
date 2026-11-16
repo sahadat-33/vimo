@@ -17,7 +17,12 @@ export type FileSignal =
   | { kind: 'ready' } | { kind: 'ctrl'; playing: boolean; time: number };
 
 export interface ServerToClient {
-  'peer:joined': (m: Member) => void; reaction: (r: { id: string; emoji: string; from: string }) => void; 'peer:left': (id: string) => void;
+  'peer:joined': (m: Member) => void;
+  'call-peer-joined': (p: { socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }) => void;
+  'call-peer-left': (p: { socketId: string }) => void;
+  'webrtc-offer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-answer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-ice-candidate': (p: { from: string; data: RTCIceCandidateInit }) => void; reaction: (r: { id: string; emoji: string; from: string }) => void; 'peer:left': (id: string) => void;
   'mode:changed': (d: { mode: Mode; playback: Playback }) => void;
   playback: (d: Playback & { from: string }) => void;
   'queue:updated': (d: { queue: QueueItem[]; current: QueueItem | null; playback?: Playback }) => void;
@@ -30,7 +35,12 @@ export interface ServerToClient {
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
   'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
-  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; 'call:url': (cb: (r: { url?: string; error?: string; status?: number }) => void) => void;
+  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void;
+  'call-join': (status: { mic: boolean; cam: boolean }, cb: (r: { ok?: boolean; error?: string; peers?: Array<{ socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }> }) => void) => void;
+  'call-leave': () => void;
+  'webrtc-offer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-answer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-ice-candidate': (p: { target: string; data: RTCIceCandidateInit }) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
   'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
