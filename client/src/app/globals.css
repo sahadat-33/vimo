@@ -4,6 +4,10 @@ html, body { height: 100%; background: #07061A; color: #FFFFFF; overscroll-behav
 body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 :focus-visible { outline: 2px solid #A76DCA; outline-offset: 2px; }
 .bg-cinema { background: radial-gradient(900px 500px at 50% -10%, rgba(138,63,187,.24), transparent 60%), radial-gradient(600px 400px at 100% 100%, rgba(249,115,22,.07), transparent 60%), #07061A; }
+/* Room shell: the phone room is exactly as tall as the VISUAL viewport (see useViewportHeight in the room page), so the
+   soft keyboard cannot push the composer off screen. 100dvh is the fallback for browsers without visualViewport. */
+.room-shell { height: 100dvh; height: var(--vvh, 100dvh); max-height: 100dvh; max-height: var(--vvh, 100dvh); }
+@media (pointer: coarse) { .room-shell { overscroll-behavior: contain; } }
 @keyframes floatUp { from { transform: translateY(0) scale(.8); opacity: 1 } to { transform: translateY(-70vh) scale(1.6); opacity: 0 } }
 .float-emoji { position: absolute; bottom: 8%; font-size: 2rem; pointer-events: none; animation: floatUp 3s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .float-emoji { animation-duration: .01s } * { transition-duration: .01s !important } }
