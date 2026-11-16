@@ -78,6 +78,22 @@ async function storageSelfTest() {
   out.ok = out.steps.length === 3 && out.steps.every((x) => x.ok);
   return (lastStorage = out);
 }
+/* Service check: do Daily and Hyperbeam accept the keys set on Render? Shown (no secrets) at /health, and logged at boot.
+   Daily: listing rooms needs a valid key (200). Hyperbeam: asking for a VM that does not exist answers 404 when the key is accepted, 401/403 when not (this one is an inference, not documented). */
+let lastServices = {}, lastSvcAt = 0;
+async function servicesCheck() {
+  lastSvcAt = Date.now();
+  const probe = async (url, key, accepted) => {
+    if (!key) return { configured: false };
+    try { const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }); return { configured: true, ok: accepted(res.status), status: res.status }; }
+    catch (e) { return { configured: true, ok: false, error: e && e.name === 'TimeoutError' ? 'timeout' : 'network' }; }
+  };
+  const [daily, hyperbeam] = await Promise.all([
+    probe('https://api.daily.co/v1/rooms?limit=1', process.env.DAILY_API_KEY, (st) => st === 200),
+    probe('https://engine.hyperbeam.com/v0/vm/vimo-key-check', process.env.HYPERBEAM_API_KEY, (st) => st !== 401 && st !== 403 && st < 500),
+  ]);
+  return (lastServices = { daily, hyperbeam });
+}
 const pubFile = (r) => r.file && { name: r.file.name, size: r.file.size, type: r.file.type, by: r.file.by, url: presign('GET', r.file.key, 12 * 3600) };
 
 /* ---------- room state. Keep in sync with client/src/lib/types.ts ---------- */
@@ -123,7 +139,8 @@ function removeMember(r, me) {
 /* ---------- REST ---------- */
 app.get('/health', async (q, s) => { // add ?storage=1 to re-run the storage self-test (at most once every 30 s)
   if (q.query.storage && s3On() && Date.now() - lastTestAt > 30000) await storageSelfTest();
-  s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0), storage: lastStorage });
+  if (q.query.services && Date.now() - lastSvcAt > 30000) await servicesCheck();
+  s.json({ ok: true, rooms: rooms.size, people: [...rooms.values()].reduce((n, r) => n + r.members.length, 0), storage: lastStorage, services: lastServices });
 });
 app.use('/api', (q, s, n) => { const t = recent(hits, q.ip, 60000); if (t.length >= 60) return s.status(429).json({ error: 'rate_limited' }); t.push(Date.now()); n(); });
 app.post('/api/auth', (q, s) => {
@@ -143,9 +160,9 @@ function dailyUrl(r) { // one Daily room per party, shared by everyone in it
       const res = await fetch('https://api.daily.co/v1/rooms', { method: 'POST', signal: AbortSignal.timeout(10000),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DAILY_API_KEY}` },
         body: JSON.stringify({ properties: { max_participants: MAX, exp: Math.floor(Date.now() / 1000) + 6 * 3600, enable_prejoin_ui: false } }) });
-      if (!res.ok) throw new Error(`daily ${res.status}`);
+      if (!res.ok) throw Object.assign(new Error(`daily ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`), { status: res.status });
       r.daily = (await res.json()).url; r.dailyAt = Date.now(); return r.daily;
-    } catch (e) { console.error('daily error:', e.message); throw Object.assign(new Error('daily failed'), { code: 'daily_failed' }); }
+    } catch (e) { console.error('daily error:', e.message); throw Object.assign(new Error('daily failed'), { code: 'daily_failed', status: e.status }); }
   })().finally(() => { r.dailyP = null; }));
 }
 app.post('/api/daily/:roomId', guard, async (q, s) => { // kept for compatibility; the app now asks over the socket (call:url)
@@ -232,7 +249,7 @@ io.on('connection', (sock) => {
     r.hostOnly = s.hostOnly; sys(r, s.hostOnly ? `${me.name} is now the only one in control` : `${me.name} gave everyone playback control`);
     io.to(r.id).emit('room:settings', { hostOnly: r.hostOnly });
   });
-  on('call:url', async (r, _me, cb) => { if (!cb) return; try { cb({ url: await dailyUrl(r) }); } catch (e) { cb({ error: e.code || 'daily_failed' }); } });
+  on('call:url', async (r, _me, cb) => { if (!cb) return; try { cb({ url: await dailyUrl(r) }); } catch (e) { cb({ error: e.code || 'daily_failed', status: e.status }); } });
   on('room:leave', (r, me) => { removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
   on('mode:set', (r, me, _cb, mode) => {
     if (!isHostMember(r, me) || !MODES.includes(mode) || mode === r.mode) return;
@@ -323,13 +340,13 @@ io.on('connection', (sock) => {
       const res = await fetch('https://engine.hyperbeam.com/v0/vm', { method: 'POST', signal: AbortSignal.timeout(20000),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` },
         body: JSON.stringify({ control_disable_default: true, profile: { save: true, load: process.env.HYPERBEAM_PROFILE || 'couple_default_profile' } }) });
-      if (!res.ok) throw new Error(`hyperbeam ${res.status}`);
+      if (!res.ok) throw Object.assign(new Error(`hyperbeam ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`), { status: res.status });
       const d = await res.json();
       if (!d.session_id || !d.embed_url || !d.admin_token) throw new Error('bad hyperbeam response');
       r.hb = { sessionId: d.session_id, embedUrl: d.embed_url, adminToken: d.admin_token };
       io.to(r.id).emit('hb:started', { embedUrl: r.hb.embedUrl }); setController(r, me.id);
       if (cb) cb({ ok: true });
-    } catch (e) { console.error('hyperbeam start:', e.message); if (cb) cb({ error: 'Could not start the browser. Check the Hyperbeam key and free minutes.' }); }
+    } catch (e) { console.error('hyperbeam start:', e.message); if (cb) cb({ error: e.status === 401 || e.status === 403 ? 'Hyperbeam rejected the API key. Check HYPERBEAM_API_KEY on Render.' : e.status === 402 || e.status === 429 ? 'Hyperbeam says the free minutes or the session limit are used up.' : e.status ? `Hyperbeam refused the request (HTTP ${e.status}). The Render logs have the details.` : 'Could not reach Hyperbeam. Try again in a moment.' }); }
     finally { r.hbStarting = false; }
   });
   on('browser:stop', async (r, me) => {
@@ -356,4 +373,5 @@ setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.n
 server.listen(process.env.PORT || 4000, () => {
   console.log('server up');
   setTimeout(() => storageSelfTest().then((r) => console.log('[storage]', JSON.stringify(r))), 3000);
+  setTimeout(() => servicesCheck().then((r) => console.log('[services]', JSON.stringify(r))), 3500);
 });
