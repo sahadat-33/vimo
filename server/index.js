@@ -7,7 +7,7 @@ const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
 const sha = (x) => crypto.createHash('sha256').update(x).digest();
 const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
 const origin = (process.env.CLIENT_ORIGIN || '').replace(/\/+$/, '') || '*'; // tolerate a trailing slash in the env var
-const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = 15000, MAX_QUEUE = 50;
+const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = 30000, MAX_QUEUE = 50;
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
 const norm = (e) => String(e).replace(/\uFE0F/g, '');
@@ -327,8 +327,12 @@ io.on('connection', (sock) => {
   });
   on('file:refresh', (_r, _me, cb) => { if (cb) cb({ file: pubFile(_r) }); }); // fresh presigned URL if the old one expired
   on('chat:send', (r, me, _cb, text) => {
-    const t = clean(text, 500); if (!t) return;
-    const m = { id: uid(), from: me.id, name: me.name, avatar: me.avatar, color: me.color, text: t, at: Date.now() };
+    const payload = typeof text === 'string' ? { text } : (text && typeof text === 'object' ? text : {});
+    const t = clean(payload.text, 500); if (!t) return;
+    const targetId = typeof payload.replyToId === 'string' ? payload.replyToId : '';
+    const target = targetId ? r.chat.find((x) => x.id === targetId && !x.system) : null;
+    const replyTo = target ? { id: target.id, senderName: clean(target.name, 20) || 'Someone', text: clean(target.text, 180) } : undefined;
+    const m = { id: uid(), from: me.id, name: me.name, avatar: me.avatar, color: me.color, text: t, at: Date.now(), ...(replyTo ? { replyTo } : {}) };
     r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m);
   });
   on('typing', (r, me) => { sock.to(r.id).emit('typing', { id: me.id, name: me.name }); }); // lets others show "Sam is typing…"
@@ -375,7 +379,7 @@ io.on('connection', (sock) => {
     if (r && r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); }
     const me = r && r.members.find((m) => m.sid === sock.id);
     if (!me) return; me.sid = null; // grace period so brief drops and reconnects do not flicker or duplicate
-    me.dropTimer = setTimeout(() => { if (!me.sid) removeMember(r, me); }, GRACE_MS);
+    me.dropTimer = setTimeout(() => { me.dropTimer = null; if (!me.sid && r.members.includes(me)) removeMember(r, me); }, GRACE_MS);
   });
 });
 setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.now() - r.createdAt > 10 * 60000) { stopHb(r); dropFile(r); rooms.delete(id); } }, 5 * 60000).unref(); // parties nobody ever joined
