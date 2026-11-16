@@ -40,6 +40,20 @@ function useLayout(): Layout {
   }, []);
   return l;
 }
+/** True while a text box has focus. Nothing may take the page away from someone who is typing (no landscape view, no hiding the chat). */
+function useTyping(): boolean {
+  const [t, setT] = useState(false);
+  useEffect(() => {
+    const isField = (e: EventTarget | null) => e instanceof HTMLElement && (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA');
+    let off: ReturnType<typeof setTimeout> | undefined;
+    const on = (e: FocusEvent) => { if (isField(e.target)) { clearTimeout(off); setT(true); } };
+    const out = (e: FocusEvent) => { if (isField(e.target)) { clearTimeout(off); off = setTimeout(() => setT(false), 400); } };
+    document.addEventListener('focusin', on); document.addEventListener('focusout', out);
+    return () => { clearTimeout(off); document.removeEventListener('focusin', on); document.removeEventListener('focusout', out); };
+  }, []);
+  return t;
+}
+
 /** Phones shrink the VISUAL viewport, not the layout viewport, for the soft keyboard. The room therefore takes its height
  *  from visualViewport (published as --vvh) instead of 100dvh, and reports whether the keyboard is currently open so the
  *  layout can step aside instead of pushing the composer out of sight. */
@@ -140,7 +154,8 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 
 function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
-  const router = useRouter(); const layout = useLayout();
+  const router = useRouter(); const rawLayout = useLayout(); const typing = useTyping();
+  const layout: Layout = typing && rawLayout === 'landscape' ? 'portrait' : rawLayout; // someone typing is never in landscape
   const kb = useViewportHeight(); // true while the soft keyboard is open
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
@@ -162,7 +177,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const mobile = coarse && layout !== 'desktop';
   const { fs, pending, enter: enterFullscreen, tap } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
   const cinema = mobile && (layout === 'landscape' || fs);
-  useEffect(() => { if (cinema) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // never leave the keyboard open over the video
+  useEffect(() => { if (cinema && !typing) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // eslint-disable-line // never leave the keyboard open over the video
 
   useEffect(() => {
     const onReact = (r: { id: string; emoji: string }) => {
@@ -180,6 +195,21 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const invite = async () => { try { await navigator.clipboard.writeText(`${location.origin}/room/${roomId}`); return true; } catch { return false; } };
   const leave = () => { socket.emit('room:leave'); setTimeout(() => socket.disconnect(), 200); router.push('/'); };
   const fullscreen = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
+
+  // Add ?debug=1 to the room address to see a live log of focus, keyboard and layout events (for finding what closes the keyboard).
+  const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
+  const [dbg, setDbg] = useState<string[]>([]);
+  const note = useCallback((m: string) => setDbg((d) => [...d.slice(-13), `${(performance.now() / 1000).toFixed(1)} ${m}`]), []);
+  useEffect(() => {
+    if (!debug) return;
+    const tag = (t: EventTarget | null) => (t instanceof HTMLElement ? t.tagName : '?');
+    const f = (e: Event) => note(`${e.type} ${tag(e.target)}${(e as FocusEvent).relatedTarget ? '>' + tag((e as FocusEvent).relatedTarget) : ''}`);
+    const vv = window.visualViewport, v = () => note(`vv h=${Math.round(vv?.height ?? 0)} top=${Math.round(vv?.offsetTop ?? 0)} inner=${innerWidth}x${innerHeight}`);
+    const o = () => note('orientationchange'), vis = () => note(`visibility ${document.visibilityState}`);
+    document.addEventListener('focusin', f); document.addEventListener('focusout', f); vv?.addEventListener('resize', v); addEventListener('orientationchange', o); document.addEventListener('visibilitychange', vis);
+    return () => { document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); vv?.removeEventListener('resize', v); removeEventListener('orientationchange', o); document.removeEventListener('visibilitychange', vis); };
+  }, [debug, note]);
+  useEffect(() => { if (debug) note(`state layout=${layout} raw=${rawLayout} cinema=${cinema} kb=${kb} typing=${typing}`); }, [debug, layout, rawLayout, cinema, kb, typing, note]);
 
   const canControl = !state.hostOnly || selfId === state.hostId; // 'only I have control': guests watch, the host drives
   const emitPb = canControl ? emitPlayback : () => {};
@@ -246,12 +276,12 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     // While typing, the header and the control bar step aside and the stage becomes a short preview strip, so the
     // composer, the message feed AND the video all stay above the keyboard at the same time.
     const tight = kb && !cinema;
-    const hide = cx(cinema && 'hidden', 'touch-land:hidden');
-    const hideChrome = cx((cinema || tight) && 'hidden', 'touch-land:hidden');
+    const hide = cx(cinema && 'hidden', !typing && 'touch-land:hidden');
+    const hideChrome = cx((cinema || tight) && 'hidden', !typing && 'touch-land:hidden');
     const outer = cinema
       ? 'fixed inset-0 z-50 h-dvh w-screen overflow-hidden bg-black'
-      : cx(tight ? 'h-24 w-full shrink-0' : 'aspect-video w-full shrink-0',
-        'relative bg-black touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen');
+      : cx(tight ? 'h-[38%] max-h-[56.25vw] w-full shrink-0' : 'aspect-video w-full shrink-0', 'relative bg-black',
+        !typing && 'touch-land:fixed touch-land:inset-0 touch-land:z-50 touch-land:aspect-auto touch-land:h-dvh touch-land:w-screen');
     body = (
       <div className="room-shell bg-cinema flex flex-col overflow-hidden">
         <div className={hideChrome}>{banner}{header}{shareBanner}</div>
@@ -262,5 +292,5 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
         <div className={hideChrome}>{callErr}</div>
         <div className={cx('min-h-0 flex-1 pt-1', hide)}>{chat}</div>{sheets}</div>);
   }
-  return <><CallAudio parts={call.parts} />{body}</>;
+  return <>{debug && <pre aria-hidden className="pointer-events-none fixed left-1 top-1 z-[2147483647] max-w-[96vw] whitespace-pre-wrap rounded bg-black/85 p-1.5 text-[10px] leading-tight text-lime-300">{dbg.join('\n')}</pre>}<CallAudio parts={call.parts} />{body}</>;
 }
