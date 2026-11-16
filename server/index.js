@@ -85,12 +85,12 @@ async function servicesCheck() {
   lastSvcAt = Date.now();
   const probe = async (url, key, accepted) => {
     if (!key) return { configured: false };
-    try { const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }); return { configured: true, ok: accepted(res.status), status: res.status }; }
+    try { const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }); const ok = accepted(res.status); return { configured: true, ok, status: res.status, ...(ok ? {} : { note: res.status === 401 || res.status === 403 ? 'key rejected' : res.status === 400 ? 'inconclusive: request rejected before the key was checked' : 'unexpected answer' }) }; }
     catch (e) { return { configured: true, ok: false, error: e && e.name === 'TimeoutError' ? 'timeout' : 'network' }; }
   };
   const [daily, hyperbeam] = await Promise.all([
     probe('https://api.daily.co/v1/rooms?limit=1', process.env.DAILY_API_KEY, (st) => st === 200),
-    probe('https://engine.hyperbeam.com/v0/vm/vimo-key-check', process.env.HYPERBEAM_API_KEY, (st) => st !== 401 && st !== 403 && st < 500),
+    probe('https://engine.hyperbeam.com/v0/vm/00000000-0000-0000-0000-000000000000', process.env.HYPERBEAM_API_KEY, (st) => st === 404),
   ]);
   return (lastServices = { daily, hyperbeam });
 }
