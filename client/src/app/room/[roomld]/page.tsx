@@ -251,7 +251,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     ? <div role="alert" className="mx-3 mt-2 flex items-center justify-between gap-2 rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent"><span>{call.error}</span>
         <button onClick={call.retry} className="shrink-0 rounded-lg bg-accent/20 px-2.5 py-1 font-semibold">Retry</button></div>
     : call.mediaNote ? <p role="status" className="mx-3 mt-2 flex items-start gap-1.5 px-2 text-xs text-muted"><Info size={14} className="mt-px shrink-0 text-accent" />{call.mediaNote}</p>
-    : call.state === 'joined' && !call.mic && !call.cam ? <p className="mx-3 mt-2 px-2 text-xs text-muted">Listening only. Tap the mic or camera to join with audio or video.</p> : null;
+    : null;
 
   const sheets = <>
     <Sheet open={peopleOpen} onClose={() => setPeopleOpen(false)} title={`People (${state.members.length})`}>
