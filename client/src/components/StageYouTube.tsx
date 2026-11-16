@@ -103,6 +103,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
   }, [attempt]); // eslint-disable-line
 
   useEffect(() => { apply(); }, [playback, current?.id]); // eslint-disable-line
+  useEffect(() => { const resume = () => { if (document.visibilityState === 'visible') apply(); }; document.addEventListener('visibilitychange', resume); window.addEventListener('pageshow', resume); return () => { document.removeEventListener('visibilitychange', resume); window.removeEventListener('pageshow', resume); }; }, []); // eslint-disable-line
   useEffect(() => { // first tap: restore sound that was muted only to satisfy the autoplay rule
     if (interacted && forcedMute.current) { forcedMute.current = false; try { player.current?.unMute?.(); } catch {} }
     apply();
