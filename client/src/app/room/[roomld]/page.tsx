@@ -34,7 +34,7 @@ function useLayout(): Layout {
     const settle = () => {
       timers.forEach(clearTimeout);
       apply();
-      timers = [setTimeout(apply, 120), setTimeout(apply, 350), setTimeout(apply, 700)];
+      timers = [120, 350, 700, 1400].map((ms) => setTimeout(apply, ms));
     };
     apply();
     addEventListener('resize', apply);
@@ -44,8 +44,11 @@ function useLayout(): Layout {
     so?.addEventListener('change', settle);
     document.addEventListener('fullscreenchange', settle);
     document.addEventListener('webkitfullscreenchange', settle);
+    addEventListener('pageshow', settle); document.addEventListener('visibilitychange', settle);
+    const watchdog = setInterval(apply, 1000); // a missed event can never leave the layout stale
     return () => {
-      timers.forEach(clearTimeout);
+      timers.forEach(clearTimeout); clearInterval(watchdog);
+      removeEventListener('pageshow', settle); document.removeEventListener('visibilitychange', settle);
       removeEventListener('resize', apply);
       removeEventListener('orientationchange', settle);
       mq.removeEventListener?.('change', settle);
@@ -70,33 +73,38 @@ function useTyping(): boolean {
   return t;
 }
 
-/** Phones shrink the VISUAL viewport, not the layout viewport, for the soft keyboard. The room therefore takes its height
- *  from visualViewport (published as --vvh) instead of 100dvh, and reports whether the keyboard is currently open so the
- *  layout can step aside instead of pushing the composer out of sight. */
-function useViewportHeight(): boolean {
+/** Phones shrink the VISUAL viewport, not the layout viewport, for the soft keyboard. While the keyboard is open the room takes its height
+ *  from visualViewport (published as --vvh) and steps aside; otherwise the room simply uses 100dvh, which the browser keeps correct.
+ *  A keyboard can only be open while a text box has focus, so a smaller viewport on its own (rotation, fullscreen, browser bars) is never
+ *  mistaken for one. That guess used to leave the header and controls hidden after fullscreen. */
+function useViewportHeight(typing: boolean): boolean {
   const [kb, setKb] = useState(false);
+  const tallest = useRef(0), width = useRef(0); // survive effect re-runs
   useEffect(() => {
     const vv = window.visualViewport;
-    let tallest = 0;
+    let timers: ReturnType<typeof setTimeout>[] = [];
     const apply = () => {
-      const h = Math.round(vv ? vv.height : innerHeight);
-      if (h > tallest) tallest = h; // remember the keyboard-free height
-      document.documentElement.style.setProperty('--vvh', `${h}px`);
-      setKb(tallest - h > 130); // a keyboard is open (not just browser chrome collapsing)
-      if (window.scrollY) window.scrollTo(0, 0); // the room page must never scroll
+      const w = vv ? vv.width : innerWidth, h = Math.round(vv ? vv.height : innerHeight);
+      if (Math.abs(w - width.current) > 1) { width.current = w; tallest.current = h; } // turned or zoomed: the old keyboard-free height is void
+      if (h > tallest.current) tallest.current = h;
+      const open = typing && tallest.current - h > 130;
+      if (open) document.documentElement.style.setProperty('--vvh', `${h}px`); else document.documentElement.style.removeProperty('--vvh');
+      setKb(open);
+      if (open && window.scrollY) window.scrollTo(0, 0); // the room page must never scroll
     };
+    const settle = () => { timers.forEach(clearTimeout); apply(); timers = [150, 500].map((ms) => setTimeout(apply, ms)); };
     apply();
-    vv?.addEventListener('resize', apply);
-    vv?.addEventListener('scroll', apply);
-    addEventListener('resize', apply);
-    addEventListener('orientationchange', apply);
+    vv?.addEventListener('resize', apply); vv?.addEventListener('scroll', apply);
+    addEventListener('resize', apply); addEventListener('orientationchange', settle);
+    document.addEventListener('fullscreenchange', settle); document.addEventListener('webkitfullscreenchange', settle);
     return () => {
-      vv?.removeEventListener('resize', apply);
-      vv?.removeEventListener('scroll', apply);
-      removeEventListener('resize', apply);
-      removeEventListener('orientationchange', apply);
+      timers.forEach(clearTimeout);
+      vv?.removeEventListener('resize', apply); vv?.removeEventListener('scroll', apply);
+      removeEventListener('resize', apply); removeEventListener('orientationchange', settle);
+      document.removeEventListener('fullscreenchange', settle); document.removeEventListener('webkitfullscreenchange', settle);
+      document.documentElement.style.removeProperty('--vvh');
     };
-  }, []);
+  }, [typing]);
   return kb;
 }
 export default function Room() {
@@ -172,7 +180,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
   const router = useRouter(); const rawLayout = useLayout(); const typing = useTyping();
   const layout: Layout = typing && rawLayout === 'landscape' ? 'portrait' : rawLayout; // someone typing is never in landscape
-  const kb = useViewportHeight(); // true while the soft keyboard is open
+  const kb = useViewportHeight(typing); // true while the soft keyboard is open (a text box has focus and the viewport shrank)
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
@@ -191,7 +199,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   // (see useCinema). There are no custom rotate or fullscreen buttons on phones.
   const wrapRef = useRef<HTMLDivElement>(null);
   const mobile = coarse && layout !== 'desktop';
-  const { fs, pending, enter: enterFullscreen, tap } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: our container is fullscreen. pending: rotated, but the browser wants a tap first
+  const { fs } = useCinema(wrapRef, mobile, layout === 'landscape'); // fs: the player (its own fullscreen button) is fullscreen
   const cinema = mobile && (layout === 'landscape' || fs);
   useEffect(() => { if (cinema && !typing) (document.activeElement as HTMLElement | null)?.blur?.(); }, [cinema]); // eslint-disable-line // never leave the keyboard open over the video
 
@@ -222,10 +230,10 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     const f = (e: Event) => note(`${e.type} ${tag(e.target)}${(e as FocusEvent).relatedTarget ? '>' + tag((e as FocusEvent).relatedTarget) : ''}`);
     const vv = window.visualViewport, v = () => note(`vv h=${Math.round(vv?.height ?? 0)} top=${Math.round(vv?.offsetTop ?? 0)} inner=${innerWidth}x${innerHeight}`);
     const o = () => note('orientationchange'), vis = () => note(`visibility ${document.visibilityState}`);
-    document.addEventListener('focusin', f); document.addEventListener('focusout', f); vv?.addEventListener('resize', v); addEventListener('orientationchange', o); document.addEventListener('visibilitychange', vis);
-    return () => { document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); vv?.removeEventListener('resize', v); removeEventListener('orientationchange', o); document.removeEventListener('visibilitychange', vis); };
+    document.addEventListener('focusin', f); document.addEventListener('focusout', f); document.addEventListener('fullscreenchange', f); vv?.addEventListener('resize', v); addEventListener('orientationchange', o); document.addEventListener('visibilitychange', vis);
+    return () => { document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); document.removeEventListener('fullscreenchange', f); vv?.removeEventListener('resize', v); removeEventListener('orientationchange', o); document.removeEventListener('visibilitychange', vis); };
   }, [debug, note]);
-  useEffect(() => { if (debug) note(`state layout=${layout} raw=${rawLayout} cinema=${cinema} kb=${kb} typing=${typing}`); }, [debug, layout, rawLayout, cinema, kb, typing, note]);
+  useEffect(() => { if (debug) note(`state layout=${layout} raw=${rawLayout} cinema=${cinema} fs=${fs} kb=${kb} typing=${typing} screen=${(screen.orientation as unknown as { type?: string } | undefined)?.type ?? '?'}`); }, [debug, layout, rawLayout, cinema, fs, kb, typing, note]);
 
   const canControl = !state.hostOnly || selfId === state.hostId; // 'only I have control': guests watch, the host drives
   const emitPb = canControl ? emitPlayback : () => {};
@@ -241,10 +249,8 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {!mobile && typeof document !== 'undefined' && document.fullscreenEnabled && <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={btn}><Maximize2 size={16} /></button>}
-      {pending && <button aria-label="Tap for fullscreen" onClick={() => { setTouched(true); void tap(); }} className="absolute inset-0 z-[15] cursor-default">
-        <span className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[toastLife_2.8s_ease-in-out_forwards] rounded-full bg-black/60 px-3 py-1 text-xs">Tap for fullscreen</span></button>}
       {coarse && !touched && pb.playing && state.mode !== 'browser' &&
-        <button onClick={() => { setTouched(true); if (cinema) void enterFullscreen(); }} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
+        <button onClick={() => setTouched(true)} className="absolute inset-0 z-20 grid place-items-center bg-black/60 text-lg font-semibold">
           <span className="rounded-full bg-primary px-5 py-3 text-white shadow-glow">Tap to sync &amp; unmute</span></button>}
     </div>);
 
