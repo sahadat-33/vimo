@@ -11,7 +11,9 @@ const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = 30000, MAX_QUE
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
 const norm = (e) => String(e).replace(/\uFE0F/g, '');
-const EMOJI = new Set(['\u2764\uFE0F', '\u{1F602}', '\u{1F631}', '\u{1F525}', '\u{1F62D}', '\u{1F37F}'].map(norm));
+const EMOJI_LIST = ['\u2764\uFE0F', '\u{1F602}', '\u{1F631}', '\u{1F525}', '\u{1F62D}', '\u{1F37F}'];
+const EMOJI = new Set(EMOJI_LIST.map(norm));
+const EMOJI_CANON = new Map(EMOJI_LIST.map((e) => [norm(e), e])); // one spelling per emoji, so reactions from different phones land on the same key
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, n);
 const clamp = (v, lo, hi, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const uid = () => crypto.randomBytes(6).toString('hex');
@@ -165,7 +167,7 @@ io.use((sock, next) => {
 });
 
 const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
-  'video:change': [10, 10000], 'chat:send': [10, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
+  'video:change': [10, 10000], 'chat:send': [10, 10000], 'chat-react': [40, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
   const t = (b[ev] = (b[ev] || []).filter((x) => now - x < lim[1])); if (t.length >= lim[0]) return false; t.push(now); return true; };
@@ -336,6 +338,20 @@ io.on('connection', (sock) => {
     r.chat.push(m); if (r.chat.length > 200) r.chat.shift(); io.to(r.id).emit('chat:message', m);
   });
   on('typing', (r, me) => { sock.to(r.id).emit('typing', { id: me.id, name: me.name }); }); // lets others show "Sam is typing…"
+  // Message reactions: toggle the sender's reaction on a chat message and tell the whole room.
+  //   client -> server: 'chat-react' { messageId, emoji }     server -> room: 'chat-reactions' { messageId, reactions: { [emoji]: memberId[] } }
+  on('chat-react', (r, me, cb, p) => {
+    const emoji = p && typeof p.emoji === 'string' ? EMOJI_CANON.get(norm(p.emoji)) : undefined;
+    if (!p || typeof p.messageId !== 'string' || !emoji) return cb && cb({ error: 'Invalid reaction.' });
+    const m = r.chat.find((x) => x.id === p.messageId && !x.system);
+    if (!m) return cb && cb({ error: 'That message is no longer available.' });
+    const reactions = m.reactions || (m.reactions = {}), who = reactions[emoji] || (reactions[emoji] = []), i = who.indexOf(me.id);
+    if (i >= 0) who.splice(i, 1); else who.push(me.id);
+    if (!who.length) delete reactions[emoji];
+    if (!Object.keys(reactions).length) delete m.reactions;
+    io.to(r.id).emit('chat-reactions', { messageId: m.id, reactions: m.reactions || {} });
+    if (cb) cb({ ok: true });
+  });
   on('reaction', (r, me, _cb, emoji) => {
     if (typeof emoji !== 'string' || !EMOJI.has(norm(emoji))) return;
     io.to(r.id).emit('reaction', { id: uid(), emoji, from: me.id });
