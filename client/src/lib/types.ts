@@ -39,6 +39,7 @@ export interface ClientToServer {
   'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string; kind?: VideoKind } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
   'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; countdown: () => void;
   'drive:mode': (p: { id: string; mode: 'auto' | 'manual' }, cb?: (r: { ok?: boolean; error?: string }) => void) => void;
+  presence: (p: { away: boolean }) => void;
   'playback-hold': (p: { on: boolean }, cb?: (r: { ok?: boolean; error?: string }) => void) => void; 'call:url': (cb: (r: { url?: string; error?: string; status?: number }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: { id: string; title: string; kind: VideoKind }, cb?: (r: { ok?: boolean; error?: string }) => void) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
@@ -71,10 +72,10 @@ let memPass = '', memCid = ''; // fallback when a browser blocks sessionStorage
 export const setPass = (p: string) => { memPass = p; try { sessionStorage.setItem('passcode', p); } catch {} };
 export const clearPass = () => { memPass = ''; try { sessionStorage.removeItem('passcode'); } catch {} };
 export const getPass = () => { if (typeof window === 'undefined') return ''; try { return sessionStorage.getItem('passcode') || memPass; } catch { return memPass; } };
-export function getCid(): string { // stable per-tab id so reconnects never create a second participant
+export function getCid(): string { // stable per browser: every tab of one browser is the same participant, and reopening an invitation resumes the same seat
   if (typeof window === 'undefined') return '';
   const valid = (value: string | null): value is string => !!value && /^[A-Za-z0-9_-]{8,64}$/.test(value);
-  let c: string | null = null; try { c = sessionStorage.getItem('cid'); } catch {}
+  let c: string | null = null; try { c = localStorage.getItem('cid'); } catch {}
   if (!valid(c) && valid(memCid)) c = memCid;
   if (!valid(c)) {
     const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -82,7 +83,7 @@ export function getCid(): string { // stable per-tab id so reconnects never crea
       : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
     c = random.slice(0, 64);
     if (!valid(c)) c = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(0, 64);
-    memCid = c; try { sessionStorage.setItem('cid', c); } catch {}
+    memCid = c; try { localStorage.setItem('cid', c); } catch {}
   }
   return c;
 }
