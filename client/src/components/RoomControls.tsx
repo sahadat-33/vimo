@@ -27,8 +27,8 @@ export default function RoomControls(p: RoomControlsProps) {
       <p className="flex items-center justify-between border-t border-white/10 pt-3 text-muted"><span>Call quality</span><span className="text-ink">{p.netText}</span></p></div>}
     <div className={cx('flex items-center justify-between gap-2 rounded-2xl border border-white/5 p-2 shadow-card', p.compact ? 'bg-black/60' : 'bg-surface/90')}>
       <div className="flex items-center gap-2">
-        <IconButton className={round} label={p.mic ? 'Turn microphone off' : 'Turn microphone on'} active={p.mic} disabled onClick={undefined}>{p.mic ? <Mic size={20} /> : <MicOff size={20} />}</IconButton>
-        <IconButton className={round} label={p.cam ? 'Turn camera off' : 'Turn camera on'} active={p.cam} disabled onClick={undefined}>{p.cam ? <Video size={20} /> : <VideoOff size={20} />}</IconButton>
+        <IconButton className={round} label={p.mic ? 'Turn microphone off' : 'Turn microphone on'} active={p.mic} disabled={!p.callReady} onClick={p.onMic}>{p.mic ? <Mic size={20} /> : <MicOff size={20} />}</IconButton>
+        <IconButton className={round} label={p.cam ? 'Turn camera off' : 'Turn camera on'} active={p.cam} disabled={!p.callReady} onClick={p.onCam}>{p.cam ? <Video size={20} /> : <VideoOff size={20} />}</IconButton>
         <IconButton className={round} label="Invite friends" onClick={invite}><UserPlus size={20} /></IconButton></div>
       <div className="flex items-center gap-2">
         <IconButton className={round} label="Settings" active={open} aria-haspopup="dialog" onClick={() => setOpen(!open)}><Settings size={20} /></IconButton>

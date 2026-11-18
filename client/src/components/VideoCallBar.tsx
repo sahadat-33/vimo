@@ -1,38 +1,32 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import type { DailyParticipant } from '@daily-co/daily-js';
 import { MicOff, WifiOff } from 'lucide-react';
 import type { Member } from '@/lib/types';
-import type { CallParticipant, CallState } from '@/lib/useCall';
+import type { CallState } from '@/lib/useCall';
 import { Skeleton, cx } from './ui';
 
-// Keep the existing component props and layout contract; media is supplied by native WebRTC.
-const find = (parts: CallParticipant[], id: string) => parts.find((p) => p.memberId === id);
+const sidOf = (p: DailyParticipant) => (p.userData as { sid?: string } | undefined)?.sid;
+const find = (parts: DailyParticipant[], id: string) => parts.find((p) => sidOf(p) === id);
 
 function AudioEl({ track }: { track?: MediaStreamTrack }) {
   const a = useRef<HTMLAudioElement>(null);
-  useEffect(() => {
-    const el = a.current;
-    if (!el) return;
-    el.srcObject = track && track.readyState === 'live' ? new MediaStream([track]) : null;
-    if (track) void el.play().catch(() => { /* Mobile browsers may require a user gesture for remote audio. */ });
-    return () => { if (el) el.srcObject = null; };
-  }, [track]);
-  return <audio ref={a} autoPlay playsInline />;
+  useEffect(() => { if (a.current) a.current.srcObject = track ? new MediaStream([track]) : null; }, [track]);
+  return <audio ref={a} autoPlay />;
 }
-/** Plays each remote audio track once, independently of visible video tiles. */
-export function CallAudio({ parts }: { parts: CallParticipant[] }) {
-  return <>{parts.filter((p) => !p.local && p.audioTrack && p.mic).map((p) => <AudioEl key={p.socketId} track={p.audioTrack} />)}</>;
+/** Plays remote voices exactly once, regardless of which tiles are on screen. */
+export function CallAudio({ parts }: { parts: DailyParticipant[] }) {
+  return <>{parts.filter((p) => !p.local).map((p) => <AudioEl key={p.session_id} track={p.tracks.audio.persistentTrack} />)}</>;
 }
 
-export function Tile({ member, p, isSelf, round, callState }: { member: Member; p?: CallParticipant; isSelf: boolean; round?: boolean; callState: CallState }) {
+export function Tile({ member, p, isSelf, round, callState }: { member: Member; p?: DailyParticipant; isSelf: boolean; round?: boolean; callState: CallState }) {
   const v = useRef<HTMLVideoElement>(null);
-  const vt = p?.videoTrack, live = !!vt && vt.readyState === 'live' && !!p?.cam;
-  useEffect(() => {
-    if (v.current) v.current.srcObject = live && vt ? new MediaStream([vt]) : null;
-    return () => { if (v.current) v.current.srcObject = null; };
-  }, [vt, live]);
-  const micOff = !!p && !p.mic;
-  const status = !p ? (callState === 'joining' ? 'Joining call…' : 'Not in call') : !p.cam ? 'Camera off' : !live ? 'Connecting video…' : '';
+  const vt = p?.tracks.video.persistentTrack, vs = p?.tracks.video.state;
+  const live = !!vt && vs === 'playable';
+  useEffect(() => { if (v.current) v.current.srcObject = live && vt ? new MediaStream([vt]) : null; }, [vt, live]);
+  const as = p?.tracks.audio.state;
+  const micOff = !!p && (as === 'off' || as === 'blocked');
+  const status = !p ? (callState === 'joining' ? 'Joining call…' : 'Not in call') : vs === 'off' ? 'Camera off' : vs === 'blocked' ? 'Camera blocked' : vs === 'loading' ? 'Connecting…' : vs === 'interrupted' ? 'Feed interrupted' : '';
   return <div className={cx('relative aspect-video overflow-hidden bg-surface2', round ? 'aspect-square rounded-full' : 'rounded-xl', !p && 'opacity-70')}>
     <video ref={v} autoPlay playsInline muted className={cx('h-full w-full object-cover', isSelf && '-scale-x-100', !live && 'invisible')} />
     {!live && <div style={{ background: member.color + '33' }} className="absolute inset-0 grid place-items-center text-center">
@@ -42,7 +36,7 @@ export function Tile({ member, p, isSelf, round, callState }: { member: Member; 
   </div>;
 }
 
-export function FeedGrid({ members, parts, selfId, callState }: { members: Member[]; parts: CallParticipant[]; selfId: string; callState: CallState }) {
+export function FeedGrid({ members, parts, selfId, callState }: { members: Member[]; parts: DailyParticipant[]; selfId: string; callState: CallState }) {
   const sorted = [...members].sort((a, b) => (a.id === selfId ? -1 : b.id === selfId ? 1 : 0));
   if (callState === 'joining' && parts.length === 0) return <div className="grid grid-cols-2 gap-2 p-2">{sorted.map((m) => <Skeleton key={m.id} className="aspect-video" />)}</div>;
   return <div className="grid grid-cols-2 gap-2 p-2">{sorted.map((m) => <Tile key={m.id} member={m} p={find(parts, m.id)} isSelf={m.id === selfId} callState={callState} />)}</div>;
@@ -56,7 +50,7 @@ function Floating({ children, index }: { children: React.ReactNode; index: numbe
     onPointerUp={() => (d.current = null)}>{children}</div>;
 }
 /** Landscape cinema mode: draggable round bubbles (first 4 people; everyone is in the People tab). */
-export function FloatingFeeds({ members, parts, selfId, callState }: { members: Member[]; parts: CallParticipant[]; selfId: string; callState: CallState }) {
+export function FloatingFeeds({ members, parts, selfId, callState }: { members: Member[]; parts: DailyParticipant[]; selfId: string; callState: CallState }) {
   const sorted = [...members].sort((a, b) => (a.id === selfId ? -1 : b.id === selfId ? 1 : 0)).slice(0, 4);
   return <>{sorted.map((m, i) => <Floating key={m.id} index={i}><Tile member={m} p={find(parts, m.id)} isSelf={m.id === selfId} callState={callState} round /></Floating>)}</>;
 }

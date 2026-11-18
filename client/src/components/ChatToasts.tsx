@@ -25,6 +25,6 @@ export default function ChatToasts({ socket, selfId, active }: { socket: AppSock
     className="pointer-events-none absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-[999999] flex w-[min(60%,22rem)] flex-col items-end gap-2">
     {toasts.map((m) => <div key={m.id} className="flex max-w-full animate-[toastLife_2.8s_ease-in-out_forwards] items-start gap-2 rounded-2xl bg-black/70 px-3 py-2 text-sm text-white shadow-card">
       <span style={{ background: m.color }} className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-base leading-none">{m.avatar}</span>
-      <span className="min-w-0"><span className="block text-xs font-semibold text-secondary">{m.name}</span>{m.replyTo && <span className="my-1 block max-w-full rounded-md border-l-2 border-secondary/80 bg-white/10 px-2 py-1 text-[11px] text-white/70"><span className="block font-semibold text-secondary">{m.replyTo.senderName}</span><span className="line-clamp-2 break-words">{m.replyTo.text}</span></span>}<span className="break-words">{m.text}</span></span></div>)}
+      <span className="min-w-0"><span className="block text-xs font-semibold text-secondary">{m.name}</span><span className="break-words">{m.text}</span></span></div>)}
   </div>;
 }

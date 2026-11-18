@@ -79,7 +79,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
             <StatusPill online={online ? true : null} label={`${health ? health.people : 0} connected`} /></div></div>
         {err && <p role="alert" className="text-sm text-accent">{err}</p>}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ModeCard icon={<Youtube />} title="YouTube Watch Party" desc="Paste links, build a queue and watch in perfect sync." tag="Synced playback" onClick={() => start('youtube')} />
+          <ModeCard icon={<Youtube />} title="Online Watch Party" desc="Paste links, build a queue and watch in perfect sync." tag="Synced playback" onClick={() => start('youtube')} />
           <ModeCard icon={<HardDrive />} title="Share a Video File" desc="One person picks a video, it uploads once, and everyone watches in sync." tag="Upload once" onClick={() => start('file')} />
           <ModeCard icon={<Globe />} title="Shared Cloud Browser" desc="Browse Netflix, Prime or Disney+ together in one window." tag="Netflix and more" onClick={() => start('browser')} />
           {joinCard}</div>

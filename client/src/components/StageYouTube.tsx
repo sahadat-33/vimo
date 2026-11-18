@@ -103,7 +103,6 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
   }, [attempt]); // eslint-disable-line
 
   useEffect(() => { apply(); }, [playback, current?.id]); // eslint-disable-line
-  useEffect(() => { const resume = () => { if (document.visibilityState === 'visible') apply(); }; document.addEventListener('visibilitychange', resume); window.addEventListener('pageshow', resume); return () => { document.removeEventListener('visibilitychange', resume); window.removeEventListener('pageshow', resume); }; }, []); // eslint-disable-line
   useEffect(() => { // first tap: restore sound that was muted only to satisfy the autoplay rule
     if (interacted && forcedMute.current) { forcedMute.current = false; try { player.current?.unMute?.(); } catch {} }
     apply();
@@ -111,7 +110,7 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
 
   return <div className="relative h-full w-full">
     <div ref={host} className="h-full w-full [&_iframe]:h-full [&_iframe]:w-full" />
-    {!current && !err && <p className="absolute inset-0 grid place-items-center p-6 text-center text-cream/70">Paste a YouTube link in the Queue tab to start.</p>}
+    {!current && !err && <p className="absolute inset-0 grid place-items-center p-6 text-center text-cream/70">Paste a video link in the Queue to start.</p>}
     {err && <div className="absolute inset-0 z-10 grid place-items-center bg-black/85 p-6 text-center"><div className="max-w-sm space-y-3">
       <p role="alert" className="text-sm">{err}</p>
       {loadFail && <button onClick={() => { document.getElementById('yt-api')?.remove(); setAttempt((n) => n + 1); }} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white">Retry</button>}
