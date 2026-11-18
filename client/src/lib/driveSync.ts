@@ -87,3 +87,26 @@ export async function probeDrive(id: string, apiKey: string): Promise<Verdict> {
   } catch { return { kind: 'temporary', message: 'Couldn’t reach Google Drive.' }; }
   finally { clearTimeout(timer); }
 }
+
+/**
+ * The player's state, separate from what the room is doing. "ready" means the browser has the video's details and can show a frame,
+ * whether or not the room is playing. Loading ends there; a paused room is a normal ready state, never a reason to keep loading.
+ */
+export type PlayerPhase = 'probe' | 'loading' | 'ready' | 'failed';
+export interface PlayerSnapshot { phase: PlayerPhase; buffering: boolean; playing: boolean; attempt: number }
+export type PlayerEvent =
+  | { type: 'metadata'; paused: boolean } // loadedmetadata: the length is known and a frame can be shown
+  | { type: 'play' } | { type: 'pause' } | { type: 'waiting' } | { type: 'canplay' };
+
+export function reducePlayer(s: PlayerSnapshot, e: PlayerEvent): PlayerSnapshot {
+  switch (e.type) {
+    case 'metadata':
+      // A failure the viewer can already see stays a failure: a late load event must not hide it.
+      if (s.phase === 'failed') return s;
+      return { phase: 'ready', buffering: false, playing: !e.paused, attempt: 1 };
+    case 'play': return { ...s, playing: true, buffering: s.phase === 'ready' ? false : s.buffering };
+    case 'pause': return { ...s, playing: false };
+    case 'waiting': return s.phase === 'ready' ? { ...s, buffering: true } : s; // during loading, the loading message is what shows
+    case 'canplay': return { ...s, buffering: false };
+  }
+}
