@@ -28,7 +28,7 @@ export default function ManualSync({ socket, canControl }: { socket: AppSocket; 
     return () => { socket.off('countdown', onCount); clearInterval(iv); clearTimeout(hide); };
   }, [socket]);
   return <>
-    <div className="pointer-events-none absolute left-1/2 top-2 z-[12] flex -translate-x-1/2 items-center gap-2">
+    <div className="pointer-events-none absolute left-2 top-2 z-[12] flex items-center gap-2">
       <span className="rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted">Manual Sync Mode</span>
       {canControl && <button onClick={() => socket.emit('countdown')} aria-label="Start a 3-2-1 countdown for everyone" className="pointer-events-auto rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white">3-2-1</button>}</div>
     {n !== null && <div role="status" aria-live="assertive" className="pointer-events-none absolute inset-0 z-[18] grid place-items-center bg-black/55 text-center">
