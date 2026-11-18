@@ -10,7 +10,7 @@ export interface ChatMessage { id: string; from: string; name: string; avatar: s
 export interface HbInfo { embedUrl: string }
 export interface RoomFile { name: string; size: number; type: string; by: string; url: string } // url is a short-lived signed link to the shared video
 export interface JoinProfile extends Profile { cid: string }
-export interface RoomState { mode: Mode; queue: QueueItem[]; current: QueueItem | null; playback: Playback;
+export interface RoomState { driveMode: { id: string; mode: 'auto' | 'manual' } | null; mode: Mode; queue: QueueItem[]; current: QueueItem | null; playback: Playback;
   chat: ChatMessage[]; hb: HbInfo | null; controller: string | null; members: Member[]; file: RoomFile | null; hostOnly: boolean; hostId: string }
 export type FileSignal =
   | { kind: 'offer' | 'answer'; sdp: RTCSessionDescriptionInit }
@@ -19,6 +19,7 @@ export type FileSignal =
 
 export interface ServerToClient {
   'peer:joined': (m: Member) => void; reaction: (r: { id: string; emoji: string; from: string }) => void; 'peer:left': (id: string) => void;
+  'drive:mode': (d: { id: string; mode: 'auto' | 'manual' }) => void;
   'mode:changed': (d: { mode: Mode; playback: Playback }) => void;
   playback: (d: Playback & { from: string }) => void;
   'queue:updated': (d: { queue: QueueItem[]; current: QueueItem | null; playback?: Playback }) => void;
@@ -36,7 +37,9 @@ export interface ServerToClient {
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
   'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string; kind?: VideoKind } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
-  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; countdown: () => void; 'call:url': (cb: (r: { url?: string; error?: string; status?: number }) => void) => void;
+  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; countdown: () => void;
+  'drive:mode': (p: { id: string; mode: 'auto' | 'manual' }, cb?: (r: { ok?: boolean; error?: string }) => void) => void;
+  'playback-hold': (p: { on: boolean }, cb?: (r: { ok?: boolean; error?: string }) => void) => void; 'call:url': (cb: (r: { url?: string; error?: string; status?: number }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
   'queue:add': (i: { id: string; title: string; kind: VideoKind }, cb?: (r: { ok?: boolean; error?: string }) => void) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
   'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
@@ -58,6 +61,8 @@ export interface StageProps {
   emitPlayback: (p: Playback) => void; onDrift?: (driftSeconds: number) => void;
   isHost: boolean; canControl: boolean; // canControl is false for guests while the host keeps control
   interacted: boolean; // true once the user has tapped or typed on this page (browsers refuse sound before that)
+  driveMode?: { id: string; mode: 'auto' | 'manual' } | null;
+  setDriveMode?: (m: 'auto' | 'manual', done: (err?: string) => void) => void;
   onManual?: (manual: boolean) => void; // a stage that cannot be synced automatically (embed fallback) reports it, so the room does not claim a sync status
   file: RoomFile | null;
 }
