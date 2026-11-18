@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { StageProps } from '@/lib/types';
 import { DRIVE_KEY } from '@/lib/party';
-import { MAX_ATTEMPTS, START_LIMIT_MS, drivePreviewUrl, driveSources, driftAction, expectedTime, nudgedRate, probeDrive, retryDelay, sourceForAttempt, type Verdict } from '@/lib/driveSync';
+import { MAX_ATTEMPTS, START_LIMIT_MS, drivePreviewUrl, driveSources, driftAction, expectedTime, nudgedRate, probeDrive, reducePlayer, retryDelay, sourceForAttempt, type PlayerSnapshot, type Verdict } from '@/lib/driveSync';
 import DriveControls from './DriveControls';
 import ManualSync from './ManualSync';
 import { cx } from './ui';
@@ -14,7 +14,7 @@ const HOLD_MS = 350;          // press and hold this long for the temporary 2x
 const TAP_MS = 300, TAP_PX = 60, MOVE_PX = 12;
 const SEEK_STEP_S = 10;
 
-type Phase = 'probe' | 'loading' | 'playing' | 'failed';
+type Phase = 'probe' | 'loading' | 'ready' | 'failed';
 type Failure = { message: string; permanent: boolean } | null;
 
 /**
@@ -43,6 +43,7 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   const driftRef = useRef(onDrift); driftRef.current = onDrift;
   const canRef = useRef(canControl); canRef.current = canControl;
   const bufRef = useRef(false); bufRef.current = buffering;
+  const playingRef = useRef(false); playingRef.current = playing;
   const phaseRef = useRef<Phase>('probe'); phaseRef.current = phase;
   const idRef = useRef(id); idRef.current = id;
   const sourcesRef = useRef(sources); sourcesRef.current = sources;
@@ -57,6 +58,10 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   const resumeAt = useRef(0), lastT = useRef(0), holdRef = useRef(false), alive = useRef(true);
   const down = useRef<{ x: number; y: number; t: number; moved: boolean } | null>(null);
   const lastTap = useRef<{ t: number; x: number } | null>(null);
+  const setPh = (p: Phase) => { phaseRef.current = p; setPh(p); };
+  const setBuf = (b: boolean) => { bufRef.current = b; setBuf(b); };
+  const setPly = (p: boolean) => { playingRef.current = p; setPly(p); };
+  const curSnap = (): PlayerSnapshot => ({ phase: phaseRef.current, buffering: bufRef.current, playing: playingRef.current, attempt: attemptRef.current });
   const expected = () => expectedTime(pbRef.current, Date.now());
   const remote = () => Date.now() < until.current;
   const act = (fn: () => void, ms = 1500) => { until.current = Date.now() + ms; try { fn(); } catch {} };
@@ -67,23 +72,23 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   // --- attempts ---
   const beginAttempt = (n: number) => {
     if (!sourcesRef.current.length) return;
-    attemptRef.current = n; setAttemptNo(n); setPhase('loading');
+    attemptRef.current = n; setAttemptNo(n); setPh('loading');
     setSrc(sourceForAttempt(sourcesRef.current, n)); setVkey(`${idRef.current}-${n}-${Date.now()}`);
-    setReady(false); setBuffering(true); setFailure(null);
+    setReady(false); setBuf(true); setFailure(null);
     clearTimeout(startTimer.current);
     startTimer.current = setTimeout(() => onAttemptFailed(false, 'The video is taking a long time to start.'), START_LIMIT_MS);
   };
   const onAttemptFailed = (permanent: boolean, message: string) => {
     clearTimeout(startTimer.current); setReady(false);
-    if (permanent || attemptRef.current >= MAX_ATTEMPTS) { setPhase('failed'); setFailure({ message, permanent }); setBuffering(false); return; }
+    if (permanent || attemptRef.current >= MAX_ATTEMPTS) { setPh('failed'); setFailure({ message, permanent }); setBuf(false); return; }
     const next = attemptRef.current + 1, run = runRef.current;
-    setAttemptNo(next); setPhase('loading'); setBuffering(true);
+    setAttemptNo(next); setPh('loading'); setBuf(true);
     clearTimeout(retryTimer.current);
     retryTimer.current = setTimeout(() => { if (run === runRef.current && alive.current) beginAttempt(next); }, retryDelay(next));
   };
   const startFlow = () => {
     runRef.current += 1; const run = runRef.current;
-    clearTimers(); attemptRef.current = 1; setFailure(null); setPhase('probe'); resumeAt.current = 0; lastT.current = 0; autoPaused.current = false;
+    clearTimers(); attemptRef.current = 1; setFailure(null); setPh('probe'); resumeAt.current = 0; lastT.current = 0; autoPaused.current = false;
     if (!DRIVE_KEY) { beginAttempt(1); return; }
     void probeDrive(idRef.current, DRIVE_KEY).then((v: Verdict) => {
       if (run !== runRef.current || !alive.current) return;
@@ -92,7 +97,7 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   };
   useEffect(() => { // (re)start for this video, unless the room has chosen Google's player
     if (!id) return;
-    setPlaying(false); setTime(0); setDuration(0); setReady(false);
+    setPly(false); setTime(0); setDuration(0); setReady(false);
     if (roomManual) { runRef.current += 1; clearTimers(); return; }
     startFlow();
     return () => { runRef.current += 1; clearTimers(); };
@@ -116,7 +121,7 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   useEffect(() => { // every second: report drift, and keep small differences absorbed by a slight speed change
     if (!ready) return;
     const t = setInterval(() => {
-      const v = vid.current; if (!v || phaseRef.current !== 'playing') return;
+      const v = vid.current; if (!v || phaseRef.current !== 'ready') return;
       const exp = expected(), diff = v.currentTime - exp;
       driftRef.current?.(Math.abs(diff));
       if (remote() || bufRef.current || holdRef.current) return;
@@ -137,14 +142,16 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   };
 
   // --- media events ---
-  const onLoaded = () => {
+  const onLoaded = () => { // ends loading whether or not the room is playing: a paused room shows the controls, ready to use
     const v = vid.current; if (!v) return;
     clearTimeout(startTimer.current); setReady(true); setDuration(Number.isFinite(v.duration) ? v.duration : 0);
+    const next = reducePlayer(curSnap(), { type: 'metadata', paused: v.paused });
+    setPh(next.phase); setBuf(next.buffering); setPly(next.playing); attemptRef.current = next.attempt; setAttemptNo(next.attempt);
     if (resumeAt.current > 0) { v.currentTime = resumeAt.current; resumeAt.current = 0; }
   };
   const onTime = () => { const v = vid.current; if (v) { lastT.current = v.currentTime; setTime(v.currentTime); } };
   const onWaiting = () => {
-    setBuffering(true); clearTimeout(stallTimer.current);
+    setBuf(reducePlayer(curSnap(), { type: 'waiting' }).buffering); clearTimeout(stallTimer.current);
     if (!canRef.current) return;
     stallTimer.current = setTimeout(() => { // the host's stream is stuck: pause the room so everyone waits
       const v = vid.current; if (!v || v.paused || !bufRef.current) return;
@@ -152,20 +159,21 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
     }, STALL_PAUSE_MS);
   };
   const onPlaying = () => {
-    setBuffering(false); setPlaying(true); setPhase('playing'); attemptRef.current = 1; setAttemptNo(1); clearTimeout(stallTimer.current);
+    const next = reducePlayer(curSnap(), { type: 'play' });
+    setPh(next.phase); setBuf(next.buffering); setPly(next.playing); clearTimeout(stallTimer.current);
     const v = vid.current;
     if (autoPaused.current && canRef.current && v) { autoPaused.current = false; emit.current({ playing: true, time: v.currentTime, rate: v.playbackRate }); }
     else snap();
   };
   const onPause = () => {
-    setPlaying(false); clearTimeout(stallTimer.current);
+    setPly(reducePlayer(curSnap(), { type: 'pause' }).playing); clearTimeout(stallTimer.current);
     if (holdRef.current) endHold();
     if (autoPaused.current) return; // our own stall pause: the room is already paused
     snap();
   };
   const onError = () => {
     const code = vid.current?.error?.code; // 2 network, 3 decode, 4 source: a format this browser can't play, or Google refusing the file
-    if (code === 2) { if (phaseRef.current === 'playing') resumeAt.current = lastT.current; return onAttemptFailed(false, 'The connection dropped.'); }
+    if (code === 2) { if (phaseRef.current === 'ready') resumeAt.current = lastT.current; return onAttemptFailed(false, 'The connection dropped.'); }
     if (code === 3) return onAttemptFailed(true, 'This browser can’t play this video’s format.');
     onAttemptFailed(false, 'Google Drive didn’t stream the file. It may be a download limit, or a format this browser can’t play.');
   };
@@ -241,19 +249,19 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
     style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none' }}
     onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onCancel} onPointerLeave={onCancel}
     onContextMenu={(e) => e.preventDefault()}>
-    {(phase === 'loading' || phase === 'playing') && src && <video key={vkey} ref={vid} src={src} className="h-full w-full bg-black object-contain" playsInline preload="auto"
-      onLoadedMetadata={onLoaded} onTimeUpdate={onTime} onWaiting={onWaiting} onPlaying={onPlaying} onCanPlay={() => setBuffering(false)}
+    {(phase === 'loading' || phase === 'ready') && src && <video key={vkey} ref={vid} src={src} className="h-full w-full bg-black object-contain" playsInline preload="auto"
+      onLoadedMetadata={onLoaded} onTimeUpdate={onTime} onWaiting={onWaiting} onPlaying={onPlaying} onCanPlay={() => setBuf(reducePlayer(curSnap(), { type: 'canplay' }).buffering)}
       onPause={onPause} onSeeked={() => snap()} onRateChange={() => snap()} onError={onError} onEnded={() => socket.emit('video:ended', id)} />}
 
     {phase === 'probe' && <div className="grid h-full w-full place-items-center"><span className="rounded-full bg-black/60 px-3 py-1 text-xs text-muted">Checking the file…</span></div>}
     {phase === 'loading' && <div className="pointer-events-none absolute inset-0 grid place-items-center"><span className="rounded-full bg-black/60 px-3 py-1 text-xs text-muted">Trying to load ({attemptNo}/{MAX_ATTEMPTS})</span></div>}
-    {phase === 'playing' && buffering && <div className="pointer-events-none absolute inset-0 grid place-items-center"><span className="rounded-full bg-black/60 px-3 py-1 text-xs text-muted">Buffering…</span></div>}
+    {phase === 'ready' && buffering && <div className="pointer-events-none absolute inset-0 grid place-items-center"><span className="rounded-full bg-black/60 px-3 py-1 text-xs text-muted">Buffering…</span></div>}
 
     {holding && <span className="pointer-events-none absolute left-1/2 top-3 z-[12] -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold">2× while held</span>}
     {flash && <div key={flash.n} className={cx('pointer-events-none absolute inset-y-0 z-[12] grid w-1/2 place-items-center animate-[driveFlash_.7s_ease-out_forwards]', flash.side === 'l' ? 'left-0' : 'right-0')}>
       <span className="rounded-full bg-black/60 px-4 py-2 text-sm font-semibold">{flash.side === 'l' ? '« 10 s' : '10 s »'}</span></div>}
 
-    {phase === 'playing' && <DriveControls visible={!playing || showUI} playing={playing} time={time} duration={duration} muted={muted} fs={fs}
+    {phase === 'ready' && <DriveControls visible={!playing || showUI} playing={playing} time={time} duration={duration} muted={muted} fs={fs}
       canControl={canControl} speed={playback.rate} onToggle={togglePlay} onSeek={seekTo} onMute={toggleMute} onFs={toggleFs} onSpeed={setSpeed} />}
 
     {phase === 'failed' && failure && <div data-ui className="absolute inset-0 z-[14] grid place-items-center bg-black/80 p-5 text-center">
