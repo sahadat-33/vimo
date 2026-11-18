@@ -7,7 +7,7 @@ const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
 const sha = (x) => crypto.createHash('sha256').update(x).digest();
 const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
 const origin = (process.env.CLIENT_ORIGIN || '').replace(/\/+$/, '') || '*'; // tolerate a trailing slash in the env var
-const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = 30000, MAX_QUEUE = 50;
+const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = Number(process.env.GRACE_MS) || 10000, MAX_QUEUE = 50;
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
 const norm = (e) => String(e).replace(/\uFE0F/g, '');
@@ -142,6 +142,13 @@ async function stopHb(r) {
   await fetch(`https://engine.hyperbeam.com/v0/vm/${encodeURIComponent(sid)}`, { method: 'DELETE',
     headers: { Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` }, signal: AbortSignal.timeout(10000) }).catch(() => {});
 }
+// Presence. A closed tab, a lost connection, or the app going to the background keeps the seat for GRACE_MS and announces nothing.
+// A person is present while any of their connections (tabs) is open; a backgrounded app counts as away.
+function startGrace(r, me) {
+  if (me.dropTimer) return;
+  me.dropTimer = setTimeout(() => { me.dropTimer = null; if ((!me.sids.size || me.away) && r.members.includes(me)) removeMember(r, me); }, GRACE_MS);
+}
+function cancelGrace(me) { if (me.dropTimer) { clearTimeout(me.dropTimer); me.dropTimer = null; } }
 function removeMember(r, me) {
   if (r.hold && r.hold.memberId === me.id) releaseHold(r);
   clearTimeout(me.dropTimer);
@@ -182,7 +189,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { typing: [20, 5000], 'drive:mode': [10, 10000], 'playback-hold': [20, 10000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'drive:mode': [10, 10000], 'playback-hold': [20, 10000], presence: [30, 10000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], 'chat-react': [40, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -195,7 +202,7 @@ io.on('connection', (sock) => {
     try {
       if (!allow(sock, ev)) return cb && cb({ error: 'Slow down a little.' });
       const r = sock.data.roomId && rooms.get(sock.data.roomId);
-      const me = r && r.members.find((m) => m.sid === sock.id);
+      const me = r && r.members.find((m) => m.sids.has(sock.id));
       if (!me) return cb && cb({ error: 'Not in a room.' });
       await fn(r, me, cb, ...args);
     } catch (e) { console.error(ev, e.message); if (cb) cb({ error: 'Request failed.' }); }
@@ -217,13 +224,13 @@ io.on('connection', (sock) => {
     const prof = { name: clean(profile.name, 20) || 'Guest', avatar: clean(profile.avatar, 8) || '🙂', color: COLOR_RE.test(profile.color) ? profile.color : '#A78BFA' };
     if (!rooms.has(roomId)) return cb({ error: 'This party has ended, or the link is wrong. Ask your host for a new link.' });
     const old = sock.data.roomId && rooms.get(sock.data.roomId);
-    if (old && old.id !== roomId) { const m = old.members.find((x) => x.sid === sock.id); if (m) removeMember(old, m); sock.leave(old.id); }
+    if (old && old.id !== roomId) { const m = old.members.find((x) => x.sids.has(sock.id)); if (m) { m.sids.delete(sock.id); if (!m.sids.size) removeMember(old, m); else m.sid = [...m.sids][0]; } sock.leave(old.id); }
     const r = rooms.get(roomId), pid = pidOf(cid);
     let me = r.members.find((m) => m.id === pid), isNew = false;
-    if (me) { clearTimeout(me.dropTimer); me.dropTimer = null; me.sid = sock.id; Object.assign(me, prof); } // idempotent: reconnect or repeated join
+    if (me) { cancelGrace(me); me.away = false; me.sids.add(sock.id); me.sid = sock.id; Object.assign(me, prof); } // idempotent: reconnect, another tab, or a repeated join
     else {
       if (r.members.length >= MAX) return cb({ error: 'Room is full (max 10 people).' });
-      me = { id: pid, sid: sock.id, dropTimer: null, ...prof }; r.members.push(me); isNew = true;
+      me = { id: pid, sid: sock.id, sids: new Set([sock.id]), away: false, dropTimer: null, ...prof }; r.members.push(me); isNew = true;
     }
     sock.data.roomId = roomId; sock.join(roomId);
     cb({ state: pub(r), selfId: pid, isHost: r.hostPid === pid });
@@ -275,7 +282,7 @@ io.on('connection', (sock) => {
     if (cb) cb({ ok: true });
   });
   relaySignal('webrtc-offer'); relaySignal('webrtc-answer'); relaySignal('webrtc-ice-candidate');
-  on('room:leave', (r, me) => { if (r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); } removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; });
+  on('room:leave', (r, me) => { if (r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); } me.sids.delete(sock.id); if (!me.sids.size) removeMember(r, me); sock.leave(r.id); sock.data.roomId = null; }); // intentional: immediately, unless another tab of this person is still open
   on('mode:set', (r, me, _cb, mode) => {
     if (!isHostMember(r, me) || !MODES.includes(mode) || mode === r.mode) return;
     r.mode = mode; setPb(r, { playing: false, time: 0, rate: 1 }); sys(r, `${me.name} switched to ${mode} mode`);
@@ -318,6 +325,12 @@ io.on('connection', (sock) => {
       sock.to(r.id).emit('playback', { ...r.playback, from: me.id }); // the holder already knows: it plays at 2x locally
     } else if (r.hold && r.hold.memberId === me.id) releaseHold(r);
     if (cb) cb({ ok: true });
+  });
+  // App lifecycle: backgrounded (away) starts the same grace as a lost connection; returning cancels it. Nothing is announced either way.
+  on('presence', (r, me, _cb, p) => {
+    if (!p || typeof p.away !== 'boolean') return;
+    me.away = p.away;
+    if (p.away) startGrace(r, me); else cancelGrace(me);
   });
   on('countdown', (r, me) => { if (canControl(r, me)) io.to(r.id).emit('countdown', { by: me.name, seconds: 3 }); });
   on('queue:remove', (r, me, _cb, id) => {
@@ -435,9 +448,9 @@ io.on('connection', (sock) => {
     { const r0 = sock.data.roomId && rooms.get(sock.data.roomId); if (r0 && r0.hold && r0.hold.sid === sock.id) releaseHold(r0); } // the 2x ends when its owner leaves
     const r = sock.data.roomId && rooms.get(sock.data.roomId);
     if (r && r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); }
-    const me = r && r.members.find((m) => m.sid === sock.id);
-    if (!me) return; me.sid = null; // grace period so brief drops and reconnects do not flicker or duplicate
-    me.dropTimer = setTimeout(() => { me.dropTimer = null; if (!me.sid && r.members.includes(me)) removeMember(r, me); }, GRACE_MS);
+    const me = r && r.members.find((m) => m.sids.has(sock.id));
+    if (!me) return; me.sids.delete(sock.id); me.sid = [...me.sids][0] || null;
+    if (!me.sids.size) startGrace(r, me); // the last connection is gone: keep the seat for GRACE_MS, silently
   });
 });
 setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.now() - r.createdAt > 10 * 60000) { stopHb(r); dropFile(r); rooms.delete(id); } }, 5 * 60000).unref(); // parties nobody ever joined
