@@ -113,7 +113,14 @@ const pubMember = (m) => ({ id: m.id, name: m.name, avatar: m.avatar, color: m.c
 const setPb = (r, p) => { r.playback = p; r.pbAt = Date.now(); };
 // A joiner must start where the room is NOW, not where it was at the last play/pause event.
 const livePb = (r) => { const p = r.playback; return p.playing ? { ...p, time: clamp(p.time + ((Date.now() - r.pbAt) / 1000) * p.rate, 0, 172800, 0) } : p; };
-const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), file: pubFile(r), chat: r.chat.slice(-100),
+// The Google player choice applies to one video only; a later video starts back on VIMO's player.
+const liveDriveMode = (r) => (r.driveMode && r.current && r.driveMode.id === r.current.id ? r.driveMode : null);
+// Ends the temporary 2x for the whole room and puts the shared speed back.
+function releaseHold(r) {
+  if (!r.hold) return; const prev = r.hold.prev; r.hold = null;
+  setPb(r, { ...livePb(r), rate: prev }); io.to(r.id).emit('playback', { ...r.playback, from: 'server' });
+}
+const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), driveMode: liveDriveMode(r), file: pubFile(r), chat: r.chat.slice(-100),
   hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember), hostOnly: r.hostOnly, hostId: r.hostPid }); // never include adminToken
 const who = (r, pid) => (r.members.find((m) => m.id === pid) || {}).name || 'Someone';
 const sys = (r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
@@ -136,6 +143,7 @@ async function stopHb(r) {
     headers: { Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` }, signal: AbortSignal.timeout(10000) }).catch(() => {});
 }
 function removeMember(r, me) {
+  if (r.hold && r.hold.memberId === me.id) releaseHold(r);
   clearTimeout(me.dropTimer);
   for (const [sid, peer] of r.callPeers) if (peer.memberId === me.id) { r.callPeers.delete(sid); io.to(r.id).emit('call-peer-left', { socketId: sid }); } r.members = r.members.filter((m) => m !== me);
   io.to(r.id).emit('peer:left', me.id); sys(r, `${me.name} left`);
@@ -174,7 +182,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'drive:mode': [10, 10000], 'playback-hold': [20, 10000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], 'chat-react': [40, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -290,6 +298,27 @@ io.on('connection', (sock) => {
     if (cb) cb({ ok: true }); // the client clears its input on success
   });
   // Manual Sync Mode (players that cannot be controlled from outside): whoever may control playback starts a shared 3-2-1 so everyone presses play together.
+  // Google's player for the whole room, or back to VIMO's. Only the person in control may choose; everyone is told.
+  on('drive:mode', (r, me, cb, p) => {
+    if (!canControl(r, me)) return cb && cb({ error: 'Only the person in control can switch the player.' });
+    if (!p || !r.current || p.id !== r.current.id || (p.mode !== 'auto' && p.mode !== 'manual')) return cb && cb({ error: 'That choice no longer applies to this video.' });
+    r.driveMode = { id: p.id, mode: p.mode };
+    sys(r, p.mode === 'manual' ? `${me.name} switched the room to Manual Sync Mode (Google’s player)` : `${me.name} switched the room back to VIMO’s player`);
+    io.to(r.id).emit('drive:mode', r.driveMode);
+    if (cb) cb({ ok: true });
+  });
+  // Temporary 2x speed: only the person in control, shared by the whole room; put back on release, or when that person leaves.
+  on('playback-hold', (r, me, cb, p) => {
+    if (!canControl(r, me)) return cb && cb({ error: 'Only the person in control can change speed.' });
+    if (!p || typeof p !== 'object' || typeof p.on !== 'boolean') return cb && cb({ error: 'Invalid request.' });
+    if (p.on) {
+      if (r.hold) return cb && cb({ ok: true });
+      r.hold = { memberId: me.id, sid: sock.id, prev: r.playback.rate };
+      setPb(r, { ...livePb(r), rate: 2 });
+      sock.to(r.id).emit('playback', { ...r.playback, from: me.id }); // the holder already knows: it plays at 2x locally
+    } else if (r.hold && r.hold.memberId === me.id) releaseHold(r);
+    if (cb) cb({ ok: true });
+  });
   on('countdown', (r, me) => { if (canControl(r, me)) io.to(r.id).emit('countdown', { by: me.name, seconds: 3 }); });
   on('queue:remove', (r, me, _cb, id) => {
     if (!canControl(r, me) || typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
@@ -403,6 +432,7 @@ io.on('connection', (sock) => {
   });
 
   sock.on('disconnect', () => {
+    { const r0 = sock.data.roomId && rooms.get(sock.data.roomId); if (r0 && r0.hold && r0.hold.sid === sock.id) releaseHold(r0); } // the 2x ends when its owner leaves
     const r = sock.data.roomId && rooms.get(sock.data.roomId);
     if (r && r.callPeers.has(sock.id)) { r.callPeers.delete(sock.id); sock.to(r.id).emit('call-peer-left', { socketId: sock.id }); }
     const me = r && r.members.find((m) => m.sid === sock.id);
