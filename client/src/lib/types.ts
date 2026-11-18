@@ -27,6 +27,11 @@ export interface ServerToClient {
   'chat:message': (m: ChatMessage) => void;
   'browser:controller': (id: string | null) => void;
   'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; typing: (t: { id: string; name: string }) => void; 'room:settings': (s: { hostOnly: boolean }) => void; countdown: (d: { by: string; seconds: number }) => void;
+  'call-peer-joined': (p: { socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }) => void;
+  'call-peer-left': (p: { socketId: string }) => void;
+  'webrtc-offer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-answer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-ice-candidate': (p: { from: string; data: RTCIceCandidateInit }) => void;
 }
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
@@ -41,6 +46,11 @@ export interface ClientToServer {
   'file:refresh': (cb: (r: { file: RoomFile | null }) => void) => void;
   'browser:start': (cb: (r: { ok?: boolean; error?: string }) => void) => void;
   'browser:control': (c: { action: 'take' | 'release' | 'pass'; to?: string }, cb?: (r: { error?: string }) => void) => void;
+  'call-join': (status: { mic: boolean; cam: boolean }, cb: (r: { ok?: boolean; error?: string; peers?: Array<{ socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }> }) => void) => void;
+  'call-leave': () => void;
+  'webrtc-offer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-answer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
+  'webrtc-ice-candidate': (p: { target: string; data: RTCIceCandidateInit }) => void;
 }
 export type AppSocket = Socket<ServerToClient, ClientToServer>;
 export interface StageProps {
