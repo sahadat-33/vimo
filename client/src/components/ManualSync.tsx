@@ -10,7 +10,7 @@ const beep = (hz: number) => { try { const a = new AudioContext(), o = a.createO
  * Everyone presses play themselves; whoever may control playback starts a shared 3-2-1 so they do it at the same moment.
  * Rendered inside the stage, so it stays inside the fullscreen container and the cinema layout.
  */
-export default function ManualSync({ socket, canControl }: { socket: AppSocket; canControl: boolean }) {
+export default function ManualSync({ socket, canControl, onBack }: { socket: AppSocket; canControl: boolean; onBack?: () => void }) {
   const [n, setN] = useState<number | null>(null), [by, setBy] = useState('');
   useEffect(() => {
     let iv: ReturnType<typeof setInterval> | undefined, hide: ReturnType<typeof setTimeout> | undefined;
@@ -28,6 +28,7 @@ export default function ManualSync({ socket, canControl }: { socket: AppSocket; 
     return () => { socket.off('countdown', onCount); clearInterval(iv); clearTimeout(hide); };
   }, [socket]);
   return <>
+    {canControl && onBack && <button onClick={onBack} className="absolute right-2 top-2 z-[13] rounded-full bg-surface2/90 px-3 py-1 text-xs font-semibold">Back to VIMO player</button>}
     <div className="pointer-events-none absolute left-2 top-2 z-[12] flex items-center gap-2">
       <span className="rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted">Manual Sync Mode</span>
       {canControl && <button onClick={() => socket.emit('countdown')} aria-label="Start a 3-2-1 countdown for everyone" className="pointer-events-auto rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white">3-2-1</button>}</div>
