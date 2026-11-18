@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { StageProps } from '@/lib/types';
 import { DRIVE_KEY } from '@/lib/party';
 import { MAX_ATTEMPTS, START_LIMIT_MS, drivePreviewUrl, driveSources, driftAction, expectedTime, nudgedRate, probeDrive, retryDelay, sourceForAttempt, type Verdict } from '@/lib/driveSync';
@@ -202,16 +203,16 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   // --- gestures on the picture (ignored over the controls) ---
   const bump = () => { setShowUI(true); clearTimeout(hideTimer.current); hideTimer.current = setTimeout(() => setShowUI(false), HIDE_UI_MS); };
   const onUi = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-ui]');
-  const onDown = (e: PointerEvent) => {
+  const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     bump(); if (onUi(e.target)) return;
     down.current = { x: e.clientX, y: e.clientY, t: Date.now(), moved: false };
     clearTimeout(holdTimer.current);
     if (canRef.current) holdTimer.current = setTimeout(() => { if (down.current && !down.current.moved) startHold(); }, HOLD_MS);
   };
-  const onMove = (e: PointerEvent) => {
+  const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = down.current; if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > MOVE_PX) { d.moved = true; clearTimeout(holdTimer.current); }
   };
-  const onUp = (e: PointerEvent) => {
+  const onUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     clearTimeout(holdTimer.current); const d = down.current; down.current = null;
     if (holdRef.current) { endHold(); return; }
     if (!d || d.moved || onUi(e.target)) return;
