@@ -247,7 +247,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
       {stageInner}
-      {!canControl && state.mode !== 'browser' && !manual && <div className="absolute inset-0 z-[5]" aria-hidden />}
+      {!canControl && state.mode !== 'browser' && !manual && state.current?.kind !== 'gdrive' && <div className="absolute inset-0 z-[5]" aria-hidden />}
       {!canControl && state.mode !== 'browser' && !manual && !cinema && <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted touch-land:hidden">🔒 Host controls playback</span>}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
