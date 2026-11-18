@@ -3,8 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileVideo } from 'lucide-react';
 import { getPass } from '@/lib/types';
-import { createRoom, setPendingFile, ytTitle } from '@/lib/party';
-import { ytId } from '@/lib/socket';
+import { BAD_LINK, createRoom, parseVideoLink, resolveVideo, setPendingFile } from '@/lib/party';
 import { Button, Card, Logo, cx } from '@/components/ui';
 import { Avatar, ProfileEditor, saveProfile, useProfileDraft } from '@/components/ProfileEditor';
 
@@ -25,12 +24,12 @@ export default function NewParty() {
 
   async function start(e: React.FormEvent) {
     e.preventDefault(); if (busy || !mode) return; setErr('');
-    const id = mode === 'youtube' ? ytId(link.trim()) : null;
-    if (mode === 'youtube' && !id) return setErr('Paste a YouTube link (youtube.com or youtu.be).');
+    if (mode === 'youtube' && !parseVideoLink(link)) return setErr(BAD_LINK);
     if (mode === 'file' && !file) return setErr('Choose a video from your device first.');
     setBusy(true);
     try {
-      const video = id ? { id, title: await ytTitle(id) } : undefined;
+      let video;
+      if (mode === 'youtube') { const v = await resolveVideo(link); if ('error' in v) { setBusy(false); return setErr(v.error); } video = { id: v.id, title: v.title, kind: v.kind }; }
       const roomId = await createRoom({ mode, hostOnly, video });
       saveProfile(draft.profile()); if (mode === 'file') setPendingFile(file);
       router.push(`/room/${roomId}`);
@@ -39,14 +38,14 @@ export default function NewParty() {
   const field = 'min-h-[48px] w-full rounded-xl border border-white/10 bg-surface2 px-4 text-ink placeholder:text-muted/60 focus:border-secondary';
   return <main className="bg-cinema min-h-[100dvh] px-4 py-8"><div className="mx-auto w-full max-w-4xl space-y-6">
     <div className="flex items-center justify-between"><Logo size={32} /><button onClick={() => router.push('/')} className="flex items-center gap-1.5 text-sm text-muted hover:text-ink"><ArrowLeft size={16} /> Back</button></div>
-    <div><h1 className="text-3xl font-bold tracking-tight">{mode === 'youtube' ? 'Start a YouTube party' : 'Start a video file party'}</h1>
+    <div><h1 className="text-3xl font-bold tracking-tight">{mode === 'youtube' ? 'Start an online party' : 'Start a video file party'}</h1>
       <p className="mt-1 text-muted">You’ll get a link to share. Friends join with just a name and a picture.</p></div>
     <ProfileEditor draft={draft}>
       <Card className="space-y-4 p-5"><form onSubmit={start} className="space-y-4">
         <div className="flex items-center gap-3 border-b border-white/10 pb-4"><Avatar avatar={draft.avatar} color={draft.color} /><span className="truncate text-lg font-semibold">{draft.name.trim() || draft.defaultName}</span></div>
         <h2 className="text-lg font-semibold">Create a party</h2>
         {mode === 'youtube'
-          ? <input aria-label="YouTube link" className={field} value={link} onChange={(e) => setLink(e.target.value)} placeholder="Paste a YouTube link" inputMode="url" autoCapitalize="off" autoCorrect="off" />
+          ? <input aria-label="Video link" className={field} value={link} onChange={(e) => setLink(e.target.value)} placeholder="Paste a video link" inputMode="url" autoCapitalize="off" autoCorrect="off" />
           : <><input ref={picker} type="file" accept="video/*" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
               <button type="button" onClick={() => picker.current?.click()} className={cx(field, 'flex items-center gap-3 text-left')}><FileVideo size={20} className="shrink-0 text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{file ? file.name : 'Choose a video from this device'}</span>{file && <span className="shrink-0 text-xs text-muted">{fmt(file.size)}</span>}</button></>}
