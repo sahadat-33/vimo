@@ -155,6 +155,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
     if (s.connected) join();
     s.on('connect_error', (e) => { setOnline(false); if (e?.message === 'no_room') setErr('This party has ended, or the link is wrong. Ask your host for a new link.'); });
+    s.on('drive:mode', (d) => setState((x) => x && { ...x, driveMode: d }));
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
     s.on('playback', (p) => setPb({ playing: p.playing, time: p.time, rate: p.rate, at: Date.now() }));
     s.on('queue:updated', (q) => { setState((x) => x && { ...x, queue: q.queue, current: q.current }); if (q.playback) setPb({ ...q.playback, at: Date.now() }); });
@@ -165,7 +166,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
     s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
     s.on('room:settings', (d) => setState((x) => x && { ...x, hostOnly: d.hostOnly }));
-    return () => { ['connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
+    return () => { ['drive:mode', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
@@ -239,7 +240,9 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
 
   const canControl = !state.hostOnly || selfId === state.hostId; // 'only I have control': guests watch, the host drives
   const emitPb = canControl ? emitPlayback : () => {};
-  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, onManual: setManual, interacted: touched, file: state.file, isHost, canControl };
+  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, onManual: setManual, driveMode: state.driveMode,
+    setDriveMode: (m: 'auto' | 'manual', done: (err?: string) => void) => socket.emit('drive:mode', { id: state.current?.id ?? '', mode: m }, (r) => done(r?.error)),
+    interacted: touched, file: state.file, isHost, canControl };
   const stageInner = state.mode === 'youtube'
     ? (state.current?.kind === 'gdrive' ? <StageGoogleDrive {...sp} /> : <StageYouTube {...sp} />)
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
