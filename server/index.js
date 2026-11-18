@@ -17,6 +17,14 @@ const EMOJI_CANON = new Map(EMOJI_LIST.map((e) => [norm(e), e])); // one spellin
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, n);
 const clamp = (v, lo, hi, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const uid = () => crypto.randomBytes(6).toString('hex');
+const GD_RE = /^[\w-]{10,80}$/; // Google Drive file ids
+/** A video someone wants to play (YouTube or Google Drive), checked and reduced to what the room needs. Video data never passes through this server. */
+function cleanVideo(item) {
+  if (!item || typeof item !== 'object') return null;
+  const title = clean(item.title, 120);
+  if (item.kind === 'gdrive') return typeof item.id === 'string' && GD_RE.test(item.id) ? { kind: 'gdrive', id: item.id, title: title || 'Google Drive video' } : null;
+  return typeof item.id === 'string' && YT_RE.test(item.id) ? { kind: 'youtube', id: item.id, title: title || item.id } : null;
+}
 const pidOf = (cid) => crypto.createHash('sha256').update('cc:' + cid).digest('hex').slice(0, 12); // public id; the cid stays secret
 
 /* ---------- abuse control (per IP) ---------- */
@@ -166,7 +174,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], 'chat-react': [40, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -222,7 +230,7 @@ io.on('connection', (sock) => {
     if (!o || typeof o !== 'object' || typeof o.cid !== 'string' || !CID_RE.test(o.cid) || !MODES.includes(o.mode)) return cb({ error: 'Invalid request.' });
     if (rooms.size >= MAX_ROOMS) return cb({ error: 'The server is busy. Try again later.' });
     const r = room(uid()); r.hostPid = pidOf(o.cid); r.hostOnly = o.hostOnly === true; r.mode = o.mode;
-    if (o.video && typeof o.video.id === 'string' && YT_RE.test(o.video.id)) r.current = { id: o.video.id, title: clean(o.video.title, 120) || o.video.id, addedBy: r.hostPid };
+    const first = cleanVideo(o.video); if (first) r.current = { ...first, addedBy: r.hostPid };
     cb({ roomId: r.id });
   });
   on('room:settings', (r, me, _cb, s) => {
@@ -272,13 +280,17 @@ io.on('connection', (sock) => {
     setPb(r, next); sock.to(r.id).emit('playback', { ...next, from: me.id });
   });
   on('queue:add', (r, me, cb, item) => {
-    if (!canControl(r, me) || !item || typeof item.id !== 'string' || !YT_RE.test(item.id)) return;
+    if (!canControl(r, me)) return;
+    const vid = cleanVideo(item); if (!vid) return cb && cb({ error: 'That link can’t be played here.' });
     if (r.queue.length >= MAX_QUEUE) return cb && cb({ error: 'The queue is full.' });
-    const v = { id: item.id, title: clean(item.title, 120) || item.id, addedBy: me.id };
+    const v = { ...vid, addedBy: me.id };
     sys(r, `${me.name} added “${v.title.slice(0, 60)}”`);
     if (!r.current) r.current = v; else r.queue.push(v);
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
+    if (cb) cb({ ok: true }); // the client clears its input on success
   });
+  // Manual Sync Mode (players that cannot be controlled from outside): whoever may control playback starts a shared 3-2-1 so everyone presses play together.
+  on('countdown', (r, me) => { if (canControl(r, me)) io.to(r.id).emit('countdown', { by: me.name, seconds: 3 }); });
   on('queue:remove', (r, me, _cb, id) => {
     if (!canControl(r, me) || typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
