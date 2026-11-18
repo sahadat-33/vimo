@@ -58,9 +58,9 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   const resumeAt = useRef(0), lastT = useRef(0), holdRef = useRef(false), alive = useRef(true);
   const down = useRef<{ x: number; y: number; t: number; moved: boolean } | null>(null);
   const lastTap = useRef<{ t: number; x: number } | null>(null);
-  const setPh = (p: Phase) => { phaseRef.current = p; setPh(p); };
-  const setBuf = (b: boolean) => { bufRef.current = b; setBuf(b); };
-  const setPly = (p: boolean) => { playingRef.current = p; setPly(p); };
+  const setPh = (p: Phase) => { phaseRef.current = p; setPhase(p); };
+  const setBuf = (b: boolean) => { bufRef.current = b; setBuffering(b); };
+  const setPly = (p: boolean) => { playingRef.current = p; setPlaying(p); };
   const curSnap = (): PlayerSnapshot => ({ phase: phaseRef.current, buffering: bufRef.current, playing: playingRef.current, attempt: attemptRef.current });
   const expected = () => expectedTime(pbRef.current, Date.now());
   const remote = () => Date.now() < until.current;
