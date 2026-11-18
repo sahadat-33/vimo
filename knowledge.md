@@ -3,7 +3,7 @@
 Hand this file to any AI assistant before asking it to work on the project.
 
 ## What it is
-A private watch-together PWA for 2 to 10 people (originally a couple). Shared video, live camera and voice, chat, reactions. Free-tier only: Vercel (client), Render (server), native WebRTC mesh calls (Google public STUN only; no calling-provider API key), Hyperbeam (cloud browser).
+A private watch-together PWA for 2 to 10 people (originally a couple). Shared video, live camera and voice, chat, reactions. Free-tier only: Vercel (client), Render (server), Daily.co (calls), Hyperbeam (cloud browser).
 Tagline: "Better together."
 
 ## Architecture
@@ -12,7 +12,7 @@ Tagline: "Better together."
 - No database. Room state resets when Render restarts or sleeps.
 
 ## Environment variables (never rename)
-Server: `ROOM_PASSCODE`, `HYPERBEAM_API_KEY`, `CLIENT_ORIGIN` (exact Vercel URL; a trailing slash is tolerated), `PORT`, optional `HYPERBEAM_PROFILE`.
+Server: `ROOM_PASSCODE`, `DAILY_API_KEY`, `HYPERBEAM_API_KEY`, `CLIENT_ORIGIN` (exact Vercel URL; a trailing slash is tolerated), `PORT`, optional `HYPERBEAM_PROFILE`.
 Shared video upload (all optional; without them the file mode shows a setup notice): `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION` (the real bucket region, e.g. `us-west-004`; never `auto` on Backblaze), `MAX_UPLOAD_MB` (default 2048, capped at 4700). Storage is Backblaze B2 (private bucket, single presigned PUT, lifecycle rule hides/deletes `rooms/` after 2+1 days). See `SETUP_STORAGE.md`. Not yet tested against a live B2 bucket.
 Client origin: `https://vimo1.vercel.app` (set as `CLIENT_ORIGIN` on Render). Client: `NEXT_PUBLIC_SERVER_URL` (Render URL). It is baked in at build time, so redeploy Vercel after changing it.
 
@@ -21,7 +21,7 @@ Client origin: `https://vimo1.vercel.app` (set as `CLIENT_ORIGIN` on Render). Cl
 2. YouTube and file go to `/party/new?mode=...`: paste a link (or pick a video), nickname, profile picture, "Only I have control" toggle, "Start the party". The client emits `room:create` (passcode-authenticated sockets only); the server makes a random 12-hex room id and records the host (`hostPid`) and `hostOnly`. The file the host picked is handed to the room in memory (`lib/party.ts`) and starts uploading on arrival.
 3. The room shows the host an invite link (Copy / Share). Friends open `/room/<id>`, enter only a nickname and picture (`JoinGate`), no passcode. Their socket connects with `auth.room` instead of `auth.passcode`; the server accepts that only for a room that already exists and only for that room.
 4. With "Only I have control" on, the server ignores `playback`, queue and `video:change` from friends (`canControl`), and the client blocks taps on the player. The host can flip it in Settings (`room:settings`). Only the host can upload a file, start the shared browser, or switch mode.
-5. Voice/video uses native browser WebRTC with Google STUN and Socket.io signaling (`call-join`, `call-leave`, `webrtc-offer`, `webrtc-answer`, `webrtc-ice-candidate`). No external calling provider or call API key is used. STUN-only cannot guarantee connectivity on restrictive NAT/firewall networks because there is no TURN relay.
+5. The Daily call link is handed out over the socket (`call:url`) to people who are in the party; the old REST route remains but needs the passcode.
 
 ## Auth
 - Passcode (host only) checked server-side only (`POST /api/auth`, constant-time compare, 10 failed attempts per IP per 10 minutes, then 429).
@@ -45,8 +45,8 @@ Client origin: `https://vimo1.vercel.app` (set as `CLIENT_ORIGIN` on Render). Cl
 Brand palette from the Vimo kit: `#6A5B9A` (brand), `#A76DCA` (secondary), `#8A3FBB` (primary), `#FFFFFF`. bg `#07061A`, surface `#110F26`, surface2 `#1A1736`, accent `#F97316` (alerts only), muted `#A9A5C4`. Font Poppins. Logo mark: `public/vimo-mark.png` (via `Logo` in `ui.tsx`); icons are derived from the supplied logo sheet. Legacy names (night, dusk, plum, blush, cream, ember) alias these so older components follow the theme. Use shared components from `ui.tsx` instead of new page-specific styles. Utility class `.bg-cinema` gives the page background.
 
 ## Server (`server/index.js`)
-- Room state per `roomId`: mode, queue, current video, playback `{playing,time,rate}`, chat (last 100), Hyperbeam session, active WebRTC call peers, controller, members `{id,name,avatar,color}`. Max 10 members. Empty rooms are deleted after 60s (and the Hyperbeam VM is stopped).
-- REST: `GET /health` (`{ok,rooms,people}`), `POST /api/auth`, Hyperbeam start/stop are socket events now, so the server can authorize them.
+- Room state per `roomId`: mode, queue, current video, playback `{playing,time,rate}`, chat (last 100), Hyperbeam session, Daily URL, controller, members `{id,name,avatar,color}`. Max 10 members. Empty rooms are deleted after 60s (and the Hyperbeam VM is stopped).
+- REST: `GET /health` (`{ok,rooms,people}`), `POST /api/auth`, `POST /api/daily/:roomId` (room must already exist). Hyperbeam start/stop are socket events now, so the server can authorize them.
 - Socket events: `room:join(roomId, profile+cid, cb)`, `room:leave`, `mode:set`, `playback`, `queue:add|remove`, `video:change`, `video:ended`, `chat:send`, `reaction`, `browser:start|stop|control`, `file:prepare|progress|ready|remove|refresh`. Server also pushes private `hb:admin`, and `file:updated` / `file:uploading`. Server pushes `peer:joined|left`, `mode:changed`, `playback`, `queue:updated`, `chat:message` (including system lines), `reaction`, `hb:started|stopped`, `browser:controller`.
 
 ## Room UI (cinema room)
@@ -57,7 +57,7 @@ Brand palette from the Vimo kit: `#6A5B9A` (brand), `#A76DCA` (secondary), `#8A3
 - `components/RoomHeader.tsx`: people capsule (stacked avatars + count, opens the People sheet), real sync status, Leave.
 - `components/RoomControls.tsx`: mic, camera, invite (left); settings popover (Smart Mic, host-only toggle, call quality) and queue (right). Playback controls are the native YouTube/`<video>` controls.
 - `components/ChatPanel.tsx`: history with avatars, names and times, "is typing…" (server event `typing`), input bar whose emoji button sends floating reactions. `components/QueuePanel.tsx`: playlist.
-- `lib/useCall.ts`: owns native WebRTC peer connections, media tracks, measured network quality, adaptive video bitrate and Smart Mic. `components/VideoCallBar.tsx`: `CallAudio`, `Tile`, `FeedGrid` (real feeds in the People sheet), `FloatingFeeds`.
+- `lib/useCall.ts`: owns the single Daily call (feeds, mic/cam, measured network quality, Smart Mic). `components/VideoCallBar.tsx`: `CallAudio`, `Tile`, `FeedGrid` (real feeds in the People sheet), `FloatingFeeds`.
 - Sync status: stages report measured drift via `onDrift`; "In sync" only if drift <= 0.8 s within the last 6 s.
 
 ## Sync model
@@ -67,18 +67,19 @@ Brand palette from the Vimo kit: `#6A5B9A` (brand), `#A76DCA` (secondary), `#8A3
 - Local file mode (shared upload): one person picks a file; the client PUTs it straight to an S3-compatible bucket with a presigned URL (progress via XHR); `file:ready` makes the server HEAD-check the object, then broadcast `file:updated` with a signed GET url (12 h). Everyone's `<video>` loads that url and follows the same `playback` state as YouTube. The server signs with its own SigV4 code (no SDK; verified against the AWS test vector) and deletes the object when it is replaced, removed, or the room is deleted. If storage is not configured the stage offers the old dual-file sync as a fallback.
 - Server `playback` keeps `pbAt`; `pub()` returns the LIVE position (`time + elapsed`) so late joiners and reconnects start in the right place. `queue:updated` can carry `playback` so a video change and its reset time arrive in one event. Any client reports `video:ended`; the server advances once.
 - Browser mode: Hyperbeam VM with persistent profile `couple_default_profile`; Stop button deletes the VM to save free minutes.
-- Smart Mic: playing mutes local mic, pausing unmutes (each client applies the rule to itself via local WebRTC audio track enablement).
+- Smart Mic: playing mutes local mic, pausing unmutes (each client applies the rule to itself via Daily `setLocalAudio`).
 
 ## Gotchas
 - Render free tier sleeps after inactivity (about 30 to 60 s cold start). Open the site a minute before use.
-- WebRTC is peer-to-peer and uses no paid media provider. Google STUN helps discover network paths but is not a media relay; calls can fail where direct connectivity is blocked. Up to three cameras are allowed at once; room members can still join audio-only.
+- Daily free tier: 10,000 participant-minutes per month, shared by everyone. Hyperbeam is similar.
 - iOS/Android block programmatic play with sound until a tap, so a "Tap to sync & unmute" overlay appears.
-- Hyperbeam calls to verify against current docs: `control_disable_default` (VM option), `updateControlDisabled`, `sendEvent` (mobile typing helper), `adminToken` option. Media permission requests must remain inside explicit microphone/camera button actions; never request them on page load.
+- Hyperbeam calls to verify against current docs: `control_disable_default` (VM option), `updateControlDisabled`, `sendEvent` (mobile typing helper), `adminToken` option. Daily: verify `startAudioOff/startVideoOff` join without a prompt and that `setLocalAudio/Video(true)` requests the device.
+- The Daily `getCallInstance()` guard avoids duplicate call objects; React strict mode is off.
 - Never commit API keys. Set them only in Render and Vercel dashboards.
 
 ## Status
-Last change set: YouTube sync rewrite (single apply function, timestamp mutex, scrub detection, muted autoplay until a tap, error overlay with skip), shared video upload, native-WebRTC call system (room-scoped Socket.io signaling, STUN-only P2P mesh, track cleanup, adaptive bitrate), landscape layout (stage shrinks beside the panel, controls at the top). Server logic was tested with a fake Socket.IO harness (41 checks). Client was type-checked against library stubs only: run the real `npx tsc --noEmit` and `npm run build` before trusting it.
-Written without a local build (no network in the authoring sandbox). `node --check server/index.js` passes. Run `cd client && npm i && npx tsc --noEmit && npm run build` first and fix any type errors. Untested in real devices: WebRTC calls across different NATs/networks, Hyperbeam control, iOS autoplay overlay.
+Last change set: YouTube sync rewrite (single apply function, timestamp mutex, scrub detection, muted autoplay until a tap, error overlay with skip), shared video upload, Daily retry fix (wait for the old call object to be destroyed), landscape layout (stage shrinks beside the panel, controls at the top). Server logic was tested with a fake Socket.IO harness (41 checks). Client was type-checked against library stubs only: run the real `npx tsc --noEmit` and `npm run build` before trusting it.
+Written without a local build (no network in the authoring sandbox). `node --check server/index.js` passes. Run `cd client && npm i && npx tsc --noEmit && npm run build` first and fix any type errors. Untested in real devices: Daily calls, Hyperbeam control, iOS autoplay overlay.
 
 ## Conventions
 Make small targeted edits. Keep env var names, the 10-person cap, `/health`, and the free-tier architecture. Keep strict TypeScript. No TODO placeholders.
@@ -86,5 +87,17 @@ Make small targeted edits. Keep env var names, the 10-person cap, `/health`, and
 ## Debugging shared upload
 `/health?storage=1` runs a server-side put/get/delete against the bucket and reports step status and B2 error codes (no secrets). It cannot test browser CORS. The upload UI shows the real failure reason (CORS vs HTTP status). The YouTube stage distinguishes a blocked script, a timeout and a player error, and offers Retry without a page reload.
 
-## Checking optional services
-`/health?services=1` checks only Hyperbeam (no secrets shown; also logged at boot). The check is an inference (404 for a made-up VM id = key accepted). It does not prove browsing works end to end.
+## Checking Daily and Hyperbeam
+`/health?services=1` asks Daily and Hyperbeam whether they accept the keys set on Render (no secrets shown; also logged as `[services]` at boot). Daily `ok: true` means the key works. The Hyperbeam check is an inference (404 for a made-up VM id = key accepted). It does not prove calls or browsing work end to end. Failure messages in the app now name the cause (key rejected, limits used up, not configured).
+
+## Video sources (YouTube and Google Drive)
+- A video in a party or queue has `kind`: `youtube` (default when missing) or `gdrive`. Facebook is not supported.
+- Detection: `lib/party.ts` `parseVideoLink()` recognises YouTube links and `drive.google.com` file links (`/file/d/<id>/...`, `/file/u/0/d/<id>/...`, `/open?id=<id>`, `/uc?id=<id>`). Folders, Docs, Sheets and other hosts are refused with a clear message.
+- Validation before queueing: `resolveVideo()` calls the Drive API once (`checkDrive`) for the name, MIME type and shortcut target. Refused: folders, Google Docs/Sheets/Slides, non-video files, private files (sharing must be "Anyone with the link"), missing files, and a rejected or restricted API key (named as a setup problem). Accepted anyway: rate limits, quota and offline (the player decides). Shortcuts are followed once.
+- Playback: `components/StageGoogleDrive.tsx` streams the file in each viewer's browser from `googleapis.com` (`alt=media`). The browser asks for byte ranges, so seeking works without the server. The server never sees the video. Play, pause, seek, rate and position use the same socket `playback` events as YouTube.
+- Buffering shows "Loading video…" / "Buffering…". A dropped connection (media error code 2) resumes at the same place, up to 2 times. No first frame within 20 s, or any other media error (unsupported codec, Google refusing the file), switches to Manual Sync Mode.
+- Manual Sync Mode: Google's own preview player (`drive.google.com/file/d/<id>/preview`), which cannot be controlled from outside. The room hides the sync indicator, and the host can start a shared 3-2-1 countdown so everyone presses play together. Without `NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY` every Drive video starts in this mode.
+- The server validates shapes only (`cleanVideo`): Drive ids 10-80 characters from `[A-Za-z0-9_-]`. The server never calls Google.
+- `queue:add` now confirms success with `{ ok: true }`, so the input clears only when the video was added.
+- `NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY` is public (it ships to browsers). Restrict it in Google Cloud to the Drive API only and to the site's referrers (`https://vimo1.vercel.app/*` and preview domains).
+- Limits: Google limits how often one file can be downloaded per day, so a very popular movie can hit that limit (viewers then get Manual Sync Mode). Browsers cannot play every codec (for example MKV with AC3/DTS audio); those also use Manual Sync Mode. Not verified on real devices yet: whether Google honours byte ranges for `alt=media` at full speed for multi-gigabyte films.

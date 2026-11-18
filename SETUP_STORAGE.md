@@ -75,7 +75,7 @@ Render → your server service → **Environment**:
 | `MAX_UPLOAD_MB` | optional, default `2048`, hard cap `4700` |
 | `CLIENT_ORIGIN` | `https://vimo1.vercel.app` (no trailing slash) |
 
-Existing variables stay as they are: `ROOM_PASSCODE`, `HYPERBEAM_API_KEY`, `PORT`, optional `HYPERBEAM_PROFILE`. The Vercel variable `NEXT_PUBLIC_SERVER_URL` is unchanged. Save, and Render redeploys.
+Existing variables stay as they are: `ROOM_PASSCODE`, `DAILY_API_KEY`, `HYPERBEAM_API_KEY`, `PORT`, optional `HYPERBEAM_PROFILE`. The Vercel variable `NEXT_PUBLIC_SERVER_URL` is unchanged. Save, and Render redeploys.
 
 Safety net: if `S3_ENDPOINT` is a Backblaze endpoint, the server takes the region from the endpoint itself and logs a warning when `S3_REGION` disagrees, because signing with the wrong region always fails.
 
