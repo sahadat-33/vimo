@@ -2,11 +2,11 @@ import type { Socket } from 'socket.io-client';
 export type Mode = 'youtube' | 'file' | 'browser';
 export interface Playback { playing: boolean; time: number; rate: number }
 export interface LocalPlayback extends Playback { at: number } // at = Date.now() when received
-export interface QueueItem { id: string; title: string; addedBy: string }
+export type VideoKind = 'youtube' | 'gdrive';
+export interface QueueItem { id: string; title: string; addedBy: string; kind?: VideoKind } // kind is missing on old items = YouTube
 export interface Profile { name: string; avatar: string; color: string }
 export interface Member extends Profile { id: string }
-export interface ChatReply { id: string; senderName: string; text: string }
-export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean; replyTo?: ChatReply }
+export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean }
 export interface HbInfo { embedUrl: string }
 export interface RoomFile { name: string; size: number; type: string; by: string; url: string } // url is a short-lived signed link to the shared video
 export interface JoinProfile extends Profile { cid: string }
@@ -18,12 +18,7 @@ export type FileSignal =
   | { kind: 'ready' } | { kind: 'ctrl'; playing: boolean; time: number };
 
 export interface ServerToClient {
-  'peer:joined': (m: Member) => void;
-  'call-peer-joined': (p: { socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }) => void;
-  'call-peer-left': (p: { socketId: string }) => void;
-  'webrtc-offer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
-  'webrtc-answer': (p: { from: string; data: RTCSessionDescriptionInit }) => void;
-  'webrtc-ice-candidate': (p: { from: string; data: RTCIceCandidateInit }) => void; reaction: (r: { id: string; emoji: string; from: string }) => void; 'peer:left': (id: string) => void;
+  'peer:joined': (m: Member) => void; reaction: (r: { id: string; emoji: string; from: string }) => void; 'peer:left': (id: string) => void;
   'mode:changed': (d: { mode: Mode; playback: Playback }) => void;
   playback: (d: Playback & { from: string }) => void;
   'queue:updated': (d: { queue: QueueItem[]; current: QueueItem | null; playback?: Playback }) => void;
@@ -31,20 +26,15 @@ export interface ServerToClient {
   'file:uploading': (d: { by: string; name: string; pct: number }) => void;
   'chat:message': (m: ChatMessage) => void;
   'browser:controller': (id: string | null) => void;
-  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; typing: (t: { id: string; name: string }) => void; 'room:settings': (s: { hostOnly: boolean }) => void;
+  'hb:started': (i: HbInfo) => void; 'hb:stopped': () => void; 'hb:admin': (d: { adminToken: string | null }) => void; typing: (t: { id: string; name: string }) => void; 'room:settings': (s: { hostOnly: boolean }) => void; countdown: (d: { by: string; seconds: number }) => void;
 }
 export interface ClientToServer {
   'room:join': (roomId: string, profile: JoinProfile, cb: (r: { error?: string; state?: RoomState; selfId?: string; isHost?: boolean }) => void) => void;
-  'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
-  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void;
-  'call-join': (status: { mic: boolean; cam: boolean }, cb: (r: { ok?: boolean; error?: string; peers?: Array<{ socketId: string; memberId: string; name: string; mic: boolean; cam: boolean }> }) => void) => void;
-  'call-leave': () => void;
-  'webrtc-offer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
-  'webrtc-answer': (p: { target: string; data: RTCSessionDescriptionInit }) => void;
-  'webrtc-ice-candidate': (p: { target: string; data: RTCIceCandidateInit }) => void;
+  'room:create': (o: { cid: string; mode: Mode; hostOnly: boolean; video?: { id: string; title: string; kind?: VideoKind } }, cb: (r: { roomId?: string; error?: string }) => void) => void;
+  'room:settings': (s: { hostOnly: boolean }) => void; typing: () => void; countdown: () => void; 'call:url': (cb: (r: { url?: string; error?: string; status?: number }) => void) => void;
   'mode:set': (m: Mode) => void; reaction: (emoji: string) => void; playback: (p: Playback) => void;
-  'queue:add': (i: QueueItem) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
-  'chat:send': (message: { text: string; replyToId?: string } | string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
+  'queue:add': (i: { id: string; title: string; kind: VideoKind }, cb?: (r: { ok?: boolean; error?: string }) => void) => void; 'queue:remove': (id: string) => void; 'video:change': (i: QueueItem) => void;
+  'chat:send': (t: string) => void; 'room:leave': () => void; 'browser:stop': () => void; 'video:ended': (id: string) => void;
   'file:prepare': (m: { name: string; type: string; size: number }, cb: (r: { error?: string; uploadUrl?: string; key?: string; maxBytes?: number }) => void) => void;
   'file:progress': (pct: number) => void; 'file:remove': () => void;
   'file:ready': (key: string, cb: (r: { ok?: boolean; error?: string }) => void) => void;
@@ -58,6 +48,7 @@ export interface StageProps {
   emitPlayback: (p: Playback) => void; onDrift?: (driftSeconds: number) => void;
   isHost: boolean; canControl: boolean; // canControl is false for guests while the host keeps control
   interacted: boolean; // true once the user has tapped or typed on this page (browsers refuse sound before that)
+  onManual?: (manual: boolean) => void; // a stage that cannot be synced automatically (embed fallback) reports it, so the room does not claim a sync status
   file: RoomFile | null;
 }
 export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000';

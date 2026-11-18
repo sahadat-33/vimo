@@ -3,7 +3,7 @@ import { AppSocket, SERVER, getPass } from './types';
 let s: AppSocket | null = null;
 export const getSocket = (roomId?: string): AppSocket => {
   const auth = { passcode: getPass(), room: roomId || '' };
-  s ??= io(SERVER, { auth, transports: ['websocket'], reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 250, reconnectionDelayMax: 1500, randomizationFactor: 0.25, timeout: 10000 }) as AppSocket;
+  s ??= io(SERVER, { auth, transports: ['websocket'] }) as AppSocket;
   s.auth = auth; // read on every (re)connect: the host uses the passcode, friends use the invite link
   if (!s.connected && !s.active) s.connect();
   return s;
