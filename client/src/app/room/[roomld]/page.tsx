@@ -10,6 +10,7 @@ import { useCall } from '@/lib/useCall';
 import { useCinema } from '@/lib/useCinema';
 import StageYouTube from '@/components/StageYouTube';
 import StageLocalFile from '@/components/StageLocalFile';
+import StageGoogleDrive from '@/components/StageGoogleDrive';
 import StageBrowser from '@/components/StageBrowser';
 import { CallAudio, FeedGrid } from '@/components/VideoCallBar';
 import ChatPanel from '@/components/ChatPanel';
@@ -182,6 +183,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const layout: Layout = typing && rawLayout === 'landscape' ? 'portrait' : rawLayout; // someone typing is never in landscape
   const kb = useViewportHeight(typing); // true while the soft keyboard is open (a text box has focus and the viewport shrank)
   const [inviteDismissed, setInviteDismissed] = useState(false);
+  const [manual, setManual] = useState(false); // the stage is in Manual Sync Mode (an embed that cannot be controlled from outside)
   const [smartMic, setSmartMic] = useState(true), [touched, setTouched] = useState(false), [coarse, setCoarse] = useState(false);
   useEffect(() => {
     const c = matchMedia('(pointer: coarse)').matches; setCoarse(c); if (c) return;
@@ -237,15 +239,16 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
 
   const canControl = !state.hostOnly || selfId === state.hostId; // 'only I have control': guests watch, the host drives
   const emitPb = canControl ? emitPlayback : () => {};
-  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, interacted: touched, file: state.file, isHost, canControl };
-  const stageInner = state.mode === 'youtube' ? <StageYouTube {...sp} />
+  const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, onManual: setManual, interacted: touched, file: state.file, isHost, canControl };
+  const stageInner = state.mode === 'youtube'
+    ? (state.current?.kind === 'gdrive' ? <StageGoogleDrive {...sp} /> : <StageYouTube {...sp} />)
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
   const btn = 'absolute right-2 top-2 z-20 grid h-9 w-9 place-items-center rounded-lg bg-black/50 opacity-80 transition hover:opacity-100 touch-land:hidden';
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
       {stageInner}
-      {!canControl && state.mode !== 'browser' && <div className="absolute inset-0 z-[5]" aria-hidden />}
-      {!canControl && state.mode !== 'browser' && !cinema && <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted touch-land:hidden">🔒 Host controls playback</span>}
+      {!canControl && state.mode !== 'browser' && !manual && <div className="absolute inset-0 z-[5]" aria-hidden />}
+      {!canControl && state.mode !== 'browser' && !manual && !cinema && <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted touch-land:hidden">🔒 Host controls playback</span>}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
         {floaters.map((f) => <span key={f.id} className="float-emoji" style={{ left: `${f.x}%` }}>{f.emoji}</span>)}</div>
       {!mobile && typeof document !== 'undefined' && document.fullscreenEnabled && <button onClick={fullscreen} aria-label="Toggle fullscreen" title="Fullscreen" className={btn}><Maximize2 size={16} /></button>}
@@ -255,7 +258,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     </div>);
 
   const netText = call.state === 'error' ? 'Unavailable' : call.state === 'joining' ? 'Connecting…' : call.net === 'good' ? 'Good' : call.net === 'low' ? 'Weak' : call.net === 'very-low' ? 'Poor' : 'Measuring…';
-  const header = <RoomHeader members={state.members} selfId={selfId} onPeople={() => setPeopleOpen(true)} sync={sync} showSync={state.mode !== 'browser'} onLeave={() => setLeaveOpen(true)} />;
+  const header = <RoomHeader members={state.members} selfId={selfId} onPeople={() => setPeopleOpen(true)} sync={sync} showSync={state.mode !== 'browser' && !manual} onLeave={() => setLeaveOpen(true)} />;
   const controls = () => (
     <RoomControls mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
       onInvite={invite} onQueue={() => setQueueOpen(true)} queueCount={state.queue.length} smartMic={smartMic} setSmartMic={setSmartMic} netText={netText}
