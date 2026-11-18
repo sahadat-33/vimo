@@ -142,9 +142,12 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
   const [pb, setPb] = useState<LocalPlayback>({ playing: false, time: 0, rate: 1, at: Date.now() });
   const [err, setErr] = useState('');
   const modeApplied = useRef(false);
+  const socketRef = useRef<AppSocket | null>(null);
+  // Leaving the room page by any route (Back, a link) is an intentional leave: the seat is released at once.
+  useEffect(() => () => { const cur = socketRef.current; if (cur && cur.connected) cur.emit('room:leave'); }, []);
 
   useEffect(() => {
-    const s = getSocket(roomId); setSocket(s); setOnline(s.connected);
+    const s = getSocket(roomId); socketRef.current = s; setSocket(s); setOnline(s.connected);
     const join = () => s.emit('room:join', roomId, { ...profile, cid: getCid() }, (r) => {
       if (r.error || !r.state) return setErr(r.error || 'Could not join');
       const wanted = new URLSearchParams(location.search).get('mode');
@@ -154,6 +157,13 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     });
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
     if (s.connected) join();
+    // The app going to the background starts the grace period (away); coming back cancels it and confirms the seat.
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') { s.emit('presence', { away: true }); return; }
+      s.emit('presence', { away: false });
+      if (s.connected) join(); else s.connect(); // idempotent: the same person, the same seat
+    };
+    document.addEventListener('visibilitychange', onVis);
     s.on('connect_error', (e) => { setOnline(false); if (e?.message === 'no_room') setErr('This party has ended, or the link is wrong. Ask your host for a new link.'); });
     s.on('drive:mode', (d) => setState((x) => x && { ...x, driveMode: d }));
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
@@ -166,7 +176,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
     s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
     s.on('room:settings', (d) => setState((x) => x && { ...x, hostOnly: d.hostOnly }));
-    return () => { ['drive:mode', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
+    return () => { document.removeEventListener('visibilitychange', onVis); ['drive:mode', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
