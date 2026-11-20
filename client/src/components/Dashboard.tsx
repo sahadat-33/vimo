@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Globe, HardDrive, KeyRound, Home, Info, Lock, Settings, Users, Youtube } from 'lucide-react';
+import { Globe, HardDrive, History as HistoryIcon, KeyRound, Home, Info, Lock, Settings, Users, Youtube } from 'lucide-react';
 import { SERVER, type Mode, type Profile, clearPass } from '@/lib/types';
 import { createRoom } from '@/lib/party';
+import PartyHistory from './PartyHistory';
 import { Button, Card, Logo, ModeCard, StatusPill, TextField, cx } from './ui';
 
-type View = 'home' | 'settings' | 'about';
-const NAV: { id: View; label: string; Icon: typeof Home }[] = [{ id: 'home', label: 'Home', Icon: Home }, { id: 'settings', label: 'Settings', Icon: Settings }, { id: 'about', label: 'About', Icon: Info }];
+type View = 'home' | 'settings' | 'about' | 'history';
+const NAV: { id: View; label: string; Icon: typeof Home }[] = [{ id: 'home', label: 'Home', Icon: Home }, { id: 'settings', label: 'Settings', Icon: Settings }, { id: 'about', label: 'About', Icon: Info }, { id: 'history', label: 'Party history', Icon: HistoryIcon }];
 const rid = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
     const bytes = new Uint8Array(8); crypto.getRandomValues(bytes);
@@ -56,9 +57,10 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
     try { p = { ...p, ...JSON.parse(localStorage.getItem('profile') || '{}') }; } catch {}
     localStorage.setItem('profile', JSON.stringify({ ...p, name: name.trim().slice(0, 20) || 'Guest' })); setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
-  const nav = (row: boolean) => <nav aria-label="Main" className={row ? 'flex gap-1' : 'flex flex-col gap-1'}>
-    {NAV.map(({ id, label, Icon }) => <button key={id} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
-      className={cx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition', view === id ? 'bg-primary/20 text-secondary' : 'text-muted hover:bg-surface2 hover:text-ink')}><Icon size={18} />{label}</button>)}</nav>;
+  // Compact header: icon-only buttons (named for screen readers and tooltips). Sidebar: icons with text labels.
+  const nav = (row: boolean) => <nav aria-label="Main" className={row ? 'ml-auto flex gap-1' : 'flex flex-col gap-1'}>
+    {NAV.map(({ id, label, Icon }) => <button key={id} type="button" onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined} aria-label={label} title={label}
+      className={cx('flex items-center rounded-xl text-sm font-medium transition', row ? 'h-11 w-11 justify-center' : 'gap-3 px-3 py-2.5', view === id ? 'bg-primary/20 text-secondary' : 'text-muted hover:bg-surface2 hover:text-ink')}><Icon size={row ? 20 : 18} />{!row && label}</button>)}</nav>;
   const online = health === null ? null : !!health;
   const joinCard = <form onSubmit={join} className="flex min-w-0 flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 shadow-card">
     <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/20 text-secondary"><KeyRound /></span>
@@ -88,6 +90,7 @@ export default function Dashboard({ onLock }: { onLock: () => void }) {
         <Card className="max-w-md space-y-4"><form onSubmit={saveName} className="space-y-4"><TextField label="Nickname" value={name} maxLength={20} onChange={(e) => setName(e.target.value)} />
           <Button>{saved ? 'Saved' : 'Save nickname'}</Button></form>
           <Button variant="ghost" onClick={() => { clearPass(); onLock(); }}><Lock size={18} /> Lock this device</Button></Card></>}
+      {view === 'history' && <PartyHistory onOpen={(id) => router.push(`/room/${encodeURIComponent(id)}`)} />}
       {view === 'about' && <><h1 className="text-3xl font-bold tracking-tight">About</h1>
         <Card className="max-w-xl space-y-3 text-muted"><p>Vimo is a private watch room for up to 10 people, with live camera and voice built in.</p>
           <p>Your passcode is checked on the server and kept only for this browser session. Videos you share are stored in the room’s private storage and removed when the room closes.</p></Card></>}
