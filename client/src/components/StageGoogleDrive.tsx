@@ -22,7 +22,7 @@ type Failure = { message: string; permanent: boolean } | null;
  * Several attempts for slow or temporary failures ("Trying to load (n/3)"). A permanent problem (private file, format, key) stops at once.
  * Google's own player is used only when the room chooses it, and then for everyone: the choice is shared through the server.
  */
-export default function StageGoogleDrive({ socket, playback, current, emitPlayback, onDrift, onManual, interacted, canControl, driveMode, setDriveMode }: StageProps) {
+export default function StageGoogleDrive({ socket, playback, current, emitPlayback, onDrift, onManual, interacted, canControl, driveMode, setDriveMode, resync }: StageProps) {
   const id = current?.id ?? '';
   const roomManual = !!driveMode && driveMode.id === id && driveMode.mode === 'manual';
   const sources = useMemo(() => driveSources(id, DRIVE_KEY), [id]);
@@ -115,6 +115,15 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
     else if (!pb.playing && !v.paused) act(() => v.pause());
   };
   useEffect(() => { apply(); }, [playback, ready]); // eslint-disable-line
+  const seenResync = useRef(resync ?? 0);
+  useEffect(() => { // resync asked for: jump to the live position, then match play/pause and speed
+    if ((resync ?? 0) === seenResync.current) return; seenResync.current = resync ?? 0;
+    const v = vid.current; if (!v || !ready || phaseRef.current !== 'ready' || roomManual) return;
+    const pb = pbRef.current;
+    act(() => { v.currentTime = expected(); if (!holdRef.current) v.playbackRate = pb.rate; }, 2000);
+    if (pb.playing && v.paused) { lastPlayCmd.current = Date.now(); act(() => { void v.play().catch(() => {}); }); }
+    else if (!pb.playing && !v.paused) act(() => v.pause());
+  }, [resync]); // eslint-disable-line
   useEffect(() => { // the first tap on this page unmutes
     if (interacted && forcedMute.current && vid.current) { forcedMute.current = false; vid.current.muted = false; setMuted(false); }
   }, [interacted]);

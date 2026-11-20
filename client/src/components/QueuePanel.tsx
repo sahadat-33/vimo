@@ -1,12 +1,12 @@
 'use client';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { X } from 'lucide-react';
 import { resolveVideo } from '@/lib/party';
 import type { AppSocket, QueueItem } from '@/lib/types';
 import { Button } from './ui';
 
 /** The playlist: what is playing, what is next, and (for whoever may control the room) adding and removing videos. */
-export default function QueuePanel({ socket, selfId, queue, current, canControl }: { socket: AppSocket; selfId: string; queue: QueueItem[]; current: QueueItem | null; canControl: boolean }) {
+function QueuePanel({ socket, selfId, queue, current, canControl }: { socket: AppSocket; selfId: string; queue: QueueItem[]; current: QueueItem | null; canControl: boolean }) {
   const [url, setUrl] = useState(''), [err, setErr] = useState('');
   async function add(e: React.FormEvent) {
     e.preventDefault(); setErr('');
@@ -28,3 +28,6 @@ export default function QueuePanel({ socket, selfId, queue, current, canControl 
       : <p className="pt-2 text-center text-xs text-muted">Only the host can change the queue.</p>}
   </div>;
 }
+
+// Memoized: typing in the link box must not re-render the queue when chat or playback updates the room.
+export default memo(QueuePanel);

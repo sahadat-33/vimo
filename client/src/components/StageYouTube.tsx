@@ -17,7 +17,7 @@ const OWNER = 'The owner doesn’t allow this video to be played outside YouTube
 const YT_ERR: Record<number, string> = { 2: 'That YouTube link isn’t valid.', 5: 'Your browser couldn’t play this video. Reload the page and try again.',
   100: 'This video was removed or is private.', 101: OWNER, 150: OWNER, 153: 'YouTube refused to load the player here. Reload the page and try again.' };
 
-export default function StageYouTube({ socket, playback, current, emitPlayback, onDrift, interacted }: StageProps) {
+export default function StageYouTube({ socket, playback, current, emitPlayback, onDrift, interacted, resync }: StageProps) {
   const host = useRef<HTMLDivElement>(null), player = useRef<any>(null), ready = useRef(false);
   const until = useRef(0);                       // isRemoteUpdate mutex: local player events are ignored until this time
   const lastTick = useRef({ t: 0, at: 0 });
@@ -103,6 +103,12 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
   }, [attempt]); // eslint-disable-line
 
   useEffect(() => { apply(); }, [playback, current?.id]); // eslint-disable-line
+  const seenResync = useRef(resync ?? 0);
+  useEffect(() => { // resync asked for (sync indicator, or back from the background): jump to the live position, then match play/pause and speed
+    if ((resync ?? 0) === seenResync.current) return; seenResync.current = resync ?? 0;
+    const p = player.current; if (!p?.seekTo || !current) return;
+    act(() => p.seekTo(expected(), true), 2000); apply();
+  }, [resync]); // eslint-disable-line
   useEffect(() => { // first tap: restore sound that was muted only to satisfy the autoplay rule
     if (interacted && forcedMute.current) { forcedMute.current = false; try { player.current?.unMute?.(); } catch {} }
     apply();
