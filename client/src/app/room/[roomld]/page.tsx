@@ -17,6 +17,7 @@ import ChatPanel from '@/components/ChatPanel';
 import ChatToasts from '@/components/ChatToasts';
 import QueuePanel from '@/components/QueuePanel';
 import RoomHeader from '@/components/RoomHeader';
+import UpNextOverlay from '@/components/UpNextOverlay';
 import JoinGate from '@/components/JoinGate';
 import RoomControls from '@/components/RoomControls';
 import { Button, Sheet, Skeleton, cx } from '@/components/ui';
@@ -142,6 +143,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
   const [pb, setPb] = useState<LocalPlayback>({ playing: false, time: 0, rate: 1, at: Date.now() });
   const [err, setErr] = useState('');
   const modeApplied = useRef(false);
+  const [resync, setResync] = useState(0); const bumpResync = useCallback(() => setResync((n) => n + 1), []); // every resync request reaches the stages
   const socketRef = useRef<AppSocket | null>(null);
   // Leaving the room page by any route (Back, a link) is an intentional leave: the seat is released at once.
   useEffect(() => () => { const cur = socketRef.current; if (cur && cur.connected) cur.emit('room:leave'); }, []);
@@ -153,7 +155,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
       const wanted = new URLSearchParams(location.search).get('mode');
       if (!modeApplied.current && wanted && ['youtube', 'file', 'browser'].includes(wanted) && r.state.members.length <= 1 && r.state.mode !== wanted) s.emit('mode:set', wanted as Mode);
       modeApplied.current = true;
-      setErr(''); setSelfId(r.selfId!); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
+      setErr(''); setSelfId(r.selfId!); setResync((n) => n + 1); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
     });
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
     if (s.connected) join();
@@ -165,6 +167,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     };
     document.addEventListener('visibilitychange', onVis);
     s.on('connect_error', (e) => { setOnline(false); if (e?.message === 'no_room') setErr('This party has ended, or the link is wrong. Ask your host for a new link.'); });
+    s.on('up-next', (d) => setState((x) => x && { ...x, upNext: d }));
     s.on('drive:mode', (d) => setState((x) => x && { ...x, driveMode: d }));
     s.on('mode:changed', ({ mode, playback }) => { setState((x) => x && { ...x, mode }); setPb({ ...playback, at: Date.now() }); });
     s.on('playback', (p) => setPb({ playing: p.playing, time: p.time, rate: p.rate, at: Date.now() }));
@@ -176,7 +179,7 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     s.on('hb:started', (i) => setState((x) => x && { ...x, hb: i })); s.on('hb:stopped', () => setState((x) => x && { ...x, hb: null }));
     s.on('browser:controller', (id) => setState((x) => x && { ...x, controller: id }));
     s.on('room:settings', (d) => setState((x) => x && { ...x, hostOnly: d.hostOnly }));
-    return () => { document.removeEventListener('visibilitychange', onVis); ['drive:mode', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
+    return () => { document.removeEventListener('visibilitychange', onVis); ['drive:mode', 'up-next', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
 
@@ -184,13 +187,16 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
 
   if (err) return <div className="bg-cinema grid min-h-[100dvh] place-items-center p-6 text-center"><div className="space-y-3"><p role="alert" className="text-accent">{err}</p><a href="/" className="inline-block rounded-xl bg-surface2 px-4 py-2 text-sm font-semibold">Back to home</a></div></div>;
   if (!socket || !state) return <RoomSkeleton />;
-  return <RoomView {...{ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }} />;
+  return <RoomView {...{ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online, resync, bumpResync }} />;
 }
 
 
-function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online }: {
-  roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean }) {
-  const router = useRouter(); const rawLayout = useLayout(); const typing = useTyping();
+function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlayback, online, resync, bumpResync }: {
+  roomId: string; profile: Profile; socket: AppSocket; selfId: string; isHost: boolean; state: RoomState; pb: LocalPlayback; emitPlayback: (p: Playback) => void; online: boolean; resync: number; bumpResync: () => void }) {
+  const [peopleOpen, setPeopleOpen] = useState(false), [queueOpen, setQueueOpen] = useState(false), [leaveOpen, setLeaveOpen] = useState(false);
+  // While a sheet is open the sheet handles the keyboard, and the room keeps its layout still (no video jump while typing a link).
+  const sheetOpen = peopleOpen || queueOpen || leaveOpen;
+  const router = useRouter(); const rawLayout = useLayout(); const typing = useTyping() && !sheetOpen;
   const layout: Layout = typing && rawLayout === 'landscape' ? 'portrait' : rawLayout; // someone typing is never in landscape
   const kb = useViewportHeight(typing); // true while the soft keyboard is open (a text box has focus and the viewport shrank)
   const [inviteDismissed, setInviteDismissed] = useState(false);
@@ -202,7 +208,6 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     const f = () => setTouched(true), evs = ['pointerup', 'keydown'];
     evs.forEach((e) => addEventListener(e, f, { passive: true })); return () => evs.forEach((e) => removeEventListener(e, f));
   }, []);
-  const [peopleOpen, setPeopleOpen] = useState(false), [queueOpen, setQueueOpen] = useState(false), [leaveOpen, setLeaveOpen] = useState(false);
   const [floaters, setFloaters] = useState<{ id: string; emoji: string; x: number }[]>([]);
   const [sync, setSync] = useState<SyncState>('unknown'); const lastReport = useRef(0);
   const call = useCall({ roomId, userName: profile.name, sid: selfId, playing: pb.playing, smartMic });
@@ -252,7 +257,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const emitPb = canControl ? emitPlayback : () => {};
   const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, onManual: setManual, driveMode: state.driveMode,
     setDriveMode: (m: 'auto' | 'manual', done: (err?: string) => void) => socket.emit('drive:mode', { id: state.current?.id ?? '', mode: m }, (r) => done(r?.error)),
-    interacted: touched, file: state.file, isHost, canControl };
+    interacted: touched, file: state.file, isHost, canControl, resync };
   const stageInner = state.mode === 'youtube'
     ? (state.current?.kind === 'gdrive' ? <StageGoogleDrive {...sp} /> : <StageYouTube {...sp} />)
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
@@ -260,6 +265,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const stage = (
     <div className="relative h-full w-full" onPointerDown={() => setTouched(true)}>
       {stageInner}
+      {state.upNext && <UpNextOverlay item={state.upNext.item} inMs={state.upNext.inMs} canControl={canControl} onCancel={() => socket.emit('up-next:cancel')} />}
       {!canControl && state.mode !== 'browser' && !manual && state.current?.kind !== 'gdrive' && <div className="absolute inset-0 z-[5]" aria-hidden />}
       {!canControl && state.mode !== 'browser' && !manual && !cinema && <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-xs text-muted touch-land:hidden">🔒 Host controls playback</span>}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden>
@@ -271,7 +277,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
     </div>);
 
   const netText = call.state === 'error' ? 'Unavailable' : call.state === 'joining' ? 'Connecting…' : call.net === 'good' ? 'Good' : call.net === 'low' ? 'Weak' : call.net === 'very-low' ? 'Poor' : 'Measuring…';
-  const header = <RoomHeader members={state.members} selfId={selfId} onPeople={() => setPeopleOpen(true)} sync={sync} showSync={state.mode !== 'browser' && !manual} onLeave={() => setLeaveOpen(true)} />;
+  const header = <RoomHeader members={state.members} selfId={selfId} onPeople={() => setPeopleOpen(true)} sync={sync} showSync={state.mode !== 'browser' && !manual} onLeave={() => setLeaveOpen(true)} onResync={bumpResync} />;
   const controls = () => (
     <RoomControls mic={call.mic} cam={call.cam} onMic={call.toggleMic} onCam={call.toggleCam} callReady={call.state === 'joined'}
       onInvite={invite} onQueue={() => setQueueOpen(true)} queueCount={state.queue.length} smartMic={smartMic} setSmartMic={setSmartMic} netText={netText}
