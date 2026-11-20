@@ -9,6 +9,8 @@ export interface Member extends Profile { id: string }
 export interface ChatMessage { id: string; from: string; name: string; avatar: string; color: string; text: string; at: number; system?: boolean }
 export interface HbInfo { embedUrl: string }
 export interface RoomFile { name: string; size: number; type: string; by: string; url: string } // url is a short-lived signed link to the shared video
+export interface PartyHistoryEntry { roomId: string; title: string; mode: Mode; lastVisited: number; wasHost: boolean }
+export interface RoomStatusResponse { live: Record<string, boolean> }
 export interface JoinProfile extends Profile { cid: string }
 export interface RoomState { upNext: { item: QueueItem; inMs: number } | null; driveMode: { id: string; mode: 'auto' | 'manual' } | null; mode: Mode; queue: QueueItem[]; current: QueueItem | null; playback: Playback;
   chat: ChatMessage[]; hb: HbInfo | null; controller: string | null; members: Member[]; file: RoomFile | null; hostOnly: boolean; hostId: string }

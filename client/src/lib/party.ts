@@ -1,11 +1,12 @@
 import { getSocket, ytId } from './socket';
 import { getCid, type Mode, type VideoKind } from './types';
+import { recordParty } from './history';
 
 /** Asks the server to start a party. Only works for someone who entered the passcode. Resolves with the room id. */
 export function createRoom(o: { mode: Mode; hostOnly: boolean; video?: { id: string; title: string; kind?: VideoKind } }): Promise<string> {
   return new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error('Can’t reach the server. It may be waking up, so try again in a few seconds.')), 12000);
-    getSocket().emit('room:create', { cid: getCid(), ...o }, (r) => { clearTimeout(t); if (r?.roomId) res(r.roomId); else rej(new Error(r?.error || 'Could not start the party.')); });
+    getSocket().emit('room:create', { cid: getCid(), ...o }, (r) => { clearTimeout(t); if (r?.roomId) { recordParty(r.roomId, { mode: o.mode, title: o.video?.title, wasHost: true }); res(r.roomId); } else rej(new Error(r?.error || 'Could not start the party.')); });
   });
 }
 
