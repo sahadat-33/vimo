@@ -114,13 +114,22 @@ const setPb = (r, p) => { r.playback = p; r.pbAt = Date.now(); };
 // A joiner must start where the room is NOW, not where it was at the last play/pause event.
 const livePb = (r) => { const p = r.playback; return p.playing ? { ...p, time: clamp(p.time + ((Date.now() - r.pbAt) / 1000) * p.rate, 0, 172800, 0) } : p; };
 // The Google player choice applies to one video only; a later video starts back on VIMO's player.
+// Auto-advance: when a video ends and something is queued, the next one starts after a short, cancelable countdown.
+const UP_NEXT_MS = Number(process.env.UP_NEXT_MS) || 5000;
+const emitUpNext = (r) => io.to(r.id).emit('up-next', r.upNext ? { item: r.queue[0], inMs: Math.max(0, r.upNext.at - Date.now()) } : null);
+function clearUpNext(r) { if (!r.upNext) return; clearTimeout(r.upNext.timer); r.upNext = null; emitUpNext(r); }
+function startUpNext(r) { r.upNext = { at: Date.now() + UP_NEXT_MS, timer: setTimeout(() => advanceQueue(r), UP_NEXT_MS) }; emitUpNext(r); }
+function advanceQueue(r) {
+  r.upNext = null; r.current = r.queue.shift() || null; setPb(r, { playing: !!r.current, time: 0, rate: 1 });
+  io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback }); emitUpNext(r);
+}
 const liveDriveMode = (r) => (r.driveMode && r.current && r.driveMode.id === r.current.id ? r.driveMode : null);
 // Ends the temporary 2x for the whole room and puts the shared speed back.
 function releaseHold(r) {
   if (!r.hold) return; const prev = r.hold.prev; r.hold = null;
   setPb(r, { ...livePb(r), rate: prev }); io.to(r.id).emit('playback', { ...r.playback, from: 'server' });
 }
-const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), driveMode: liveDriveMode(r), file: pubFile(r), chat: r.chat.slice(-100),
+const pub = (r) => ({ mode: r.mode, queue: r.queue, current: r.current, playback: livePb(r), driveMode: liveDriveMode(r), upNext: r.upNext ? { item: r.queue[0], inMs: Math.max(0, r.upNext.at - Date.now()) } : null, file: pubFile(r), chat: r.chat.slice(-100),
   hb: r.hb && { embedUrl: r.hb.embedUrl }, controller: r.controller, members: r.members.map(pubMember), hostOnly: r.hostOnly, hostId: r.hostPid }); // never include adminToken
 const who = (r, pid) => (r.members.find((m) => m.id === pid) || {}).name || 'Someone';
 const sys = (r, text) => { const m = { id: uid(), from: 'system', name: '', avatar: '', color: '', text, at: Date.now(), system: true };
@@ -189,7 +198,7 @@ io.use((sock, next) => {
   noteFail(ip); next(new Error('bad passcode'));
 });
 
-const LIMITS = { typing: [20, 5000], 'drive:mode': [10, 10000], 'playback-hold': [20, 10000], presence: [30, 10000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
+const LIMITS = { typing: [20, 5000], 'drive:mode': [10, 10000], 'playback-hold': [20, 10000], presence: [30, 10000], 'up-next:cancel': [10, 10000], 'room:create': [5, 60000], countdown: [6, 10000], 'room:settings': [10, 10000], 'call-join': [30, 60000], 'call-leave': [8, 60000], 'webrtc-offer': [60, 10000], 'webrtc-answer': [60, 10000], 'webrtc-ice-candidate': [180, 10000], 'room:join': [6, 10000], 'room:leave': [4, 10000], 'mode:set': [10, 10000], playback: [30, 5000], 'queue:add': [10, 10000], 'queue:remove': [20, 10000],
   'video:change': [10, 10000], 'chat:send': [10, 10000], 'chat-react': [40, 10000], reaction: [15, 5000], 'browser:control': [10, 10000], 'browser:start': [3, 60000], 'browser:stop': [5, 60000],
   'video:ended': [6, 10000], 'file:prepare': [6, 60000], 'file:progress': [120, 10000], 'file:ready': [6, 60000], 'file:remove': [4, 60000], 'file:refresh': [6, 60000] };
 const allow = (sock, ev) => { const lim = LIMITS[ev]; if (!lim) return false; const now = Date.now(); const b = (sock.data.rl = sock.data.rl || {});
@@ -334,20 +343,21 @@ io.on('connection', (sock) => {
   });
   on('countdown', (r, me) => { if (canControl(r, me)) io.to(r.id).emit('countdown', { by: me.name, seconds: 3 }); });
   on('queue:remove', (r, me, _cb, id) => {
-    if (!canControl(r, me) || typeof id !== 'string') return; r.queue = r.queue.filter((v) => v.id !== id);
+    if (!canControl(r, me) || typeof id !== 'string') return; if (r.upNext && r.queue[0] && r.queue[0].id === id) clearUpNext(r); r.queue = r.queue.filter((v) => v.id !== id);
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current });
   });
   on('video:change', (r, me, _cb, item) => {
     if (!canControl(r, me)) return;
     const v = item && typeof item.id === 'string' && r.queue.find((q) => q.id === item.id); // only items that are really queued
-    if (!v) return; r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); setPb(r, { playing: true, time: 0, rate: 1 });
+    if (!v) return; clearUpNext(r); r.current = v; r.queue = r.queue.filter((q) => q.id !== v.id); setPb(r, { playing: true, time: 0, rate: 1 });
     io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback }); // one event, so clients never see a new video with the old time
   });
-  on('video:ended', (r, _me, _cb, id) => { // any client may report it; only the first report for the current video advances the queue
-    if (typeof id !== 'string' || !r.current || r.current.id !== id) return;
-    r.current = r.queue.shift() || null; setPb(r, { playing: !!r.current, time: 0, rate: 1 });
-    io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback });
+  on('video:ended', (r, _me, _cb, id) => { // any client may report it; only the first report for the current video starts the countdown
+    if (typeof id !== 'string' || !r.current || r.current.id !== id || r.upNext) return;
+    if (!r.queue.length) { r.current = null; setPb(r, { playing: false, time: 0, rate: 1 }); io.to(r.id).emit('queue:updated', { queue: r.queue, current: r.current, playback: r.playback }); return; }
+    startUpNext(r);
   });
+  on('up-next:cancel', (r, me) => { if (canControl(r, me)) clearUpNext(r); });
 
   /* shared local video: one person uploads straight to the bucket, everyone plays the same file */
   on('file:prepare', (r, me, cb, meta) => {
