@@ -7,7 +7,7 @@ const ROOM_PASSCODE = process.env.ROOM_PASSCODE || '';
 const sha = (x) => crypto.createHash('sha256').update(x).digest();
 const ok = (p) => !!ROOM_PASSCODE && typeof p === 'string' && p.length <= 200 && crypto.timingSafeEqual(sha(p), sha(ROOM_PASSCODE));
 const origin = (process.env.CLIENT_ORIGIN || '').replace(/\/+$/, '') || '*'; // tolerate a trailing slash in the env var
-const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = Number(process.env.GRACE_MS) || 10000, MAX_QUEUE = 50;
+const MAX = 10, MAX_CALL_CAMERAS = 3, MAX_ROOMS = 200, GRACE_MS = Number(process.env.GRACE_MS) || 10000, MAX_QUEUE = 50, HOST_RETURN_MS = Number(process.env.HOST_RETURN_MS) || 5 * 60000; // how long an emptied room waits for its host to come back
 const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/, CID_RE = /^[A-Za-z0-9_-]{8,64}$/, YT_RE = /^[\w-]{11}$/, COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MODES = ['youtube', 'file', 'browser'];
 const norm = (e) => String(e).replace(/\uFE0F/g, '');
@@ -164,7 +164,10 @@ function removeMember(r, me) {
   for (const [sid, peer] of r.callPeers) if (peer.memberId === me.id) { r.callPeers.delete(sid); io.to(r.id).emit('call-peer-left', { socketId: sid }); } r.members = r.members.filter((m) => m !== me);
   io.to(r.id).emit('peer:left', me.id); sys(r, `${me.name} left`);
   if (r.controller === me.id) setController(r, null);
-  if (!r.members.length) setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length) { stopHb(x); dropFile(x); rooms.delete(x.id); } }, 60000);
+  if (!r.members.length) {
+    const since = (r.emptySince = Date.now()); // an emptied room stays rejoinable for a while so the host can come back after an accidental exit
+    setTimeout(() => { const x = rooms.get(r.id); if (x && !x.members.length && x.emptySince === since) { stopHb(x); dropFile(x); rooms.delete(x.id); } }, r.hb ? 60000 : HOST_RETURN_MS);
+  }
 }
 
 /* ---------- REST ---------- */
@@ -178,6 +181,12 @@ app.post('/api/auth', (q, s) => {
   if (blocked(q.ip)) return s.status(429).json({ ok: false, error: 'too_many' });
   if (ok(q.body && q.body.passcode)) return s.json({ ok: true });
   noteFail(q.ip); s.status(401).json({ ok: false });
+});
+// Which of these rooms are still running? Used by the Party History list. Answers only yes/no for up to 5 well-formed ids.
+app.get('/api/rooms/status', (q, s) => {
+  const ids = String(q.query.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 5);
+  const live = {}; for (const id of ids) if (ROOM_RE.test(id)) live[id] = rooms.has(id);
+  s.set('Cache-Control', 'no-store'); s.json({ live });
 });
 const guard = (q, s, n) => {
   if (blocked(q.ip)) return s.status(429).json({ error: 'too_many' });
@@ -241,10 +250,10 @@ io.on('connection', (sock) => {
       if (r.members.length >= MAX) return cb({ error: 'Room is full (max 10 people).' });
       me = { id: pid, sid: sock.id, sids: new Set([sock.id]), away: false, dropTimer: null, ...prof }; r.members.push(me); isNew = true;
     }
-    sock.data.roomId = roomId; sock.join(roomId);
-    cb({ state: pub(r), selfId: pid, isHost: r.hostPid === pid });
+    sock.data.roomId = roomId; sock.join(roomId); r.emptySince = null;
+    cb({ state: pub(r), selfId: pid, isHost: r.hostPid === pid }); // hostPid is derived from the stable browser id and never reassigned, so the original host gets host control back on any rejoin while the room runs
     if (r.controller === pid && r.hb) sock.emit('hb:admin', { adminToken: r.hb.adminToken });
-    if (isNew) { sock.to(roomId).emit('peer:joined', pubMember(me)); sys(r, `${me.name} joined`); }
+    if (isNew) { sock.to(roomId).emit('peer:joined', pubMember(me)); sys(r, pid === r.hostPid ? `${me.name} is back (host)` : `${me.name} joined`); }
   });
 
   sock.on('room:create', (o, cb) => { // only someone who knows the passcode can start a party
@@ -463,7 +472,7 @@ io.on('connection', (sock) => {
     if (!me.sids.size) startGrace(r, me); // the last connection is gone: keep the seat for GRACE_MS, silently
   });
 });
-setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.now() - r.createdAt > 10 * 60000) { stopHb(r); dropFile(r); rooms.delete(id); } }, 5 * 60000).unref(); // parties nobody ever joined
+setInterval(() => { for (const [id, r] of rooms) if (!r.members.length && Date.now() - (r.emptySince || r.createdAt) > Math.max(10 * 60000, HOST_RETURN_MS)) { stopHb(r); dropFile(r); rooms.delete(id); } }, 5 * 60000).unref(); // parties nobody ever joined
 server.listen(process.env.PORT || 4000, () => {
   console.log('server up');
   setTimeout(() => storageSelfTest().then((r) => console.log('[storage]', JSON.stringify(r))), 3000);
