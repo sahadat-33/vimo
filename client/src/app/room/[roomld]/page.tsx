@@ -6,7 +6,6 @@ import { getSocket } from '@/lib/socket';
 import type { AppSocket, LocalPlayback, Member, Mode, Playback, Profile, RoomState } from '@/lib/types';
 import type { SyncState } from '@/components/RoomHeader';
 import { getCid, getPass } from '@/lib/types';
-import { recordParty } from '@/lib/history';
 import { useCall } from '@/lib/useCall';
 import { useCinema } from '@/lib/useCinema';
 import StageYouTube from '@/components/StageYouTube';
@@ -156,7 +155,6 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
       const wanted = new URLSearchParams(location.search).get('mode');
       if (!modeApplied.current && wanted && ['youtube', 'file', 'browser'].includes(wanted) && r.state.members.length <= 1 && r.state.mode !== wanted) s.emit('mode:set', wanted as Mode);
       modeApplied.current = true;
-      recordParty(roomId, { mode: r.state.mode, title: r.state.current?.title, wasHost: !!r.isHost }); // Party History: the server decides host status, so a reclaimed host is remembered as host
       setErr(''); setSelfId(r.selfId!); setResync((n) => n + 1); setIsHost(!!r.isHost); setState(r.state); setPb({ ...r.state.playback, at: Date.now() });
     });
     s.on('connect', () => { setOnline(true); join(); }); s.on('disconnect', () => setOnline(false));
@@ -184,9 +182,6 @@ function RoomInner({ roomId, profile }: { roomId: string; profile: Profile }) {
     return () => { document.removeEventListener('visibilitychange', onVis); ['drive:mode', 'up-next', 'connect', 'disconnect', 'connect_error', 'mode:changed', 'playback', 'queue:updated', 'file:updated', 'peer:joined', 'peer:left', 'chat:message', 'hb:started', 'hb:stopped', 'browser:controller', 'room:settings']
       .forEach((e) => s.off(e as never)); };
   }, [roomId, profile]);
-
-  const curTitle = state?.current?.title, curMode = state?.mode;
-  useEffect(() => { if (curMode) recordParty(roomId, { mode: curMode, title: curTitle }); }, [roomId, curMode, curTitle]); // keep the history title in step with what is playing
 
   const emitPlayback = useCallback((p: Playback) => { setPb({ ...p, at: Date.now() }); socket?.emit('playback', p); }, [socket]);
 
@@ -262,7 +257,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
   const emitPb = canControl ? emitPlayback : () => {};
   const sp = { socket, selfId, roomId, playback: pb, current: state.current, emitPlayback: emitPb, onDrift, onManual: setManual, driveMode: state.driveMode,
     setDriveMode: (m: 'auto' | 'manual', done: (err?: string) => void) => socket.emit('drive:mode', { id: state.current?.id ?? '', mode: m }, (r) => done(r?.error)),
-    interacted: touched, file: state.file, isHost, canControl, resync };
+    interacted: touched, file: state.file, isHost, canControl, resync, overlay: <ChatToasts socket={socket} selfId={selfId} active={cinema || fs} /> };
   const stageInner = state.mode === 'youtube'
     ? (state.current?.kind === 'gdrive' ? <StageGoogleDrive {...sp} /> : <StageYouTube {...sp} />)
     : state.mode === 'file' ? <StageLocalFile {...sp} /> : <StageBrowser {...sp} members={state.members} initial={state.hb} controller={state.controller} />;
@@ -338,7 +333,7 @@ function RoomView({ roomId, profile, socket, selfId, isHost, state, pb, emitPlay
         <div className={hideChrome}>{banner}{header}{shareBanner}</div>
         <div ref={wrapRef} className={outer}>
           <div className="relative h-full w-full">{stage}</div>
-          <ChatToasts socket={socket} selfId={selfId} active={cinema || fs} /></div>
+          </div>
         <div className={cx('px-3 pt-3', hideChrome)}>{controls()}</div>
         <div className={hideChrome}>{callErr}</div>
         <div className={cx('min-h-0 flex-1 pt-1', hide)}>{chat}</div>{sheets}</div>);
