@@ -92,12 +92,36 @@ Make small targeted edits. Keep env var names, the 10-person cap, `/health`, and
 
 ## Video sources (YouTube and Google Drive)
 - A video in a party or queue has `kind`: `youtube` (default when missing) or `gdrive`. Facebook is not supported.
-- Detection: `lib/party.ts` `parseVideoLink()` recognises YouTube links and `drive.google.com` file links (`/file/d/<id>/...`, `/file/u/0/d/<id>/...`, `/open?id=<id>`, `/uc?id=<id>`). Folders, Docs, Sheets and other hosts are refused with a clear message.
-- Validation before queueing: `resolveVideo()` calls the Drive API once (`checkDrive`) for the name, MIME type and shortcut target. Refused: folders, Google Docs/Sheets/Slides, non-video files, private files (sharing must be "Anyone with the link"), missing files, and a rejected or restricted API key (named as a setup problem). Accepted anyway: rate limits, quota and offline (the player decides). Shortcuts are followed once.
-- Playback: `components/StageGoogleDrive.tsx` streams the file in each viewer's browser from `googleapis.com` (`alt=media`). The browser asks for byte ranges, so seeking works without the server. The server never sees the video. Play, pause, seek, rate and position use the same socket `playback` events as YouTube.
-- Buffering shows "Loading video…" / "Buffering…". A dropped connection (media error code 2) resumes at the same place, up to 2 times. No first frame within 20 s, or any other media error (unsupported codec, Google refusing the file), switches to Manual Sync Mode.
-- Manual Sync Mode: Google's own preview player (`drive.google.com/file/d/<id>/preview`), which cannot be controlled from outside. The room hides the sync indicator, and the host can start a shared 3-2-1 countdown so everyone presses play together. Without `NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY` every Drive video starts in this mode.
-- The server validates shapes only (`cleanVideo`): Drive ids 10-80 characters from `[A-Za-z0-9_-]`. The server never calls Google.
-- `queue:add` now confirms success with `{ ok: true }`, so the input clears only when the video was added.
-- `NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY` is public (it ships to browsers). Restrict it in Google Cloud to the Drive API only and to the site's referrers (`https://vimo1.vercel.app/*` and preview domains).
-- Limits: Google limits how often one file can be downloaded per day, so a very popular movie can hit that limit (viewers then get Manual Sync Mode). Browsers cannot play every codec (for example MKV with AC3/DTS audio); those also use Manual Sync Mode. Not verified on real devices yet: whether Google honours byte ranges for `alt=media` at full speed for multi-gigabyte films.
+- Detection and checks before queueing: `lib/party.ts` (`parseVideoLink`, `resolveVideo`, `checkDrive`). Folders, Docs and private files are refused with clear messages.
+- Playback: `components/StageGoogleDrive.tsx` plays the file in VIMO's own `<video>`. Every viewer's browser streams from Google; the server never sees the video.
+- Attempts (`lib/driveSync.ts`): a metadata check first (`probeDrive`). Permanent problems (private file, missing file, invalid key, not a video, unsupported format) stop at once with a message. Temporary problems (slow start over 15 s, dropped connection, rate limit, network) retry: "Trying to load (1/3)", (2/3), (3/3), with short pauses. The sources alternate: the documented Drive API, then the second route, then the API again.
+- The second route is Drive's download address, which is NOT documented and may stop working.
+- Google's own player is never used just because loading is slow. It is used only when the room chooses it: the person in control presses "Use Google’s player for the room" after a failure (or switches via the manual badge). The choice is stored on the server (`driveMode`, per video), broadcast as `drive:mode`, and announced in chat. Every participant switches together; "Back to VIMO player" reverses it. A late joiner gets the current choice.
+- Sync: the host's play, pause, seek and speed are shared (`playback`). Small drift (0.8 to 3 s) is absorbed by a 5% speed change; larger drift seeks; nothing corrects while buffering. A stall of 1.5 s on the host's side pauses the room until it recovers. Late joiners get the live position.
+- Temporary 2x: press and hold the picture (controller only). The 2x is shared (`playback-hold`) and put back on release, or when the controller leaves (`releaseHold`).
+- Gestures: double-tap left or right for -10 s / +10 s (controller only); the flash shows the jump. Gestures ignore taps on the controls.
+- Controls (`components/DriveControls.tsx`): row 1 time, progress, duration; row 2 play, volume, then settings and fullscreen. Settings: speed 0.5 to 2 (controller only, shared) and quality (only "Original" exists for a Drive file).
+- Limits: captions and per-device quality choice are not provided. The Drive API key is public; restrict it to the Drive API and the site's referrers. Google limits downloads of popular files. Not tested on real devices yet.
+
+## Presence and reconnects
+- Identity: `getCid()` is stored per browser (localStorage). Every tab of one browser is the same participant, and reopening an invitation resumes the same seat. A different browser or device is a different participant.
+- A person is present while any of their connections (tabs) is open (`members[].sids`).
+- Intentional leave (Leave button, browser Back, navigating away): the seat is released at once and announced. If another tab of the same person is still open, the seat stays.
+- Temporary absence (tab closed, connection lost, app in the background via `presence {away:true}`): the seat is kept for 10 s (`GRACE_MS`, env override for tests) and nothing is announced. Returning cancels the grace (`presence {away:false}`) and the page re-confirms the seat with `room:join`, which is idempotent.
+- No duplicate entries: `room:join` finds the existing member by stable id and only announces a join for a new member.
+- Limits: a mobile browser may freeze a backgrounded socket; the server then removes the seat after 10 s, and the page re-joins when it returns (announced as a new join, which is what happened).
+
+## Player state (Google Drive stage)
+- Phases: probe → loading (Trying to load n/3) → ready (controls shown, paused or playing) → failed. `ready` is reached on loadedmetadata whether or not the room is playing; the room's play state is separate (`playing`).
+- `buffering` is set only by `waiting` while ready, and cleared by canplay or play. Retries (up to 3) happen only on a start timeout or a genuine media error, never because the host has not pressed Play.
+- The pure logic is `reducePlayer` in `lib/driveSync.ts`, tested in Node (paused load, playing load, play after a paused load, buffering, late load after failure).
+- Lesson: a rename that touches helper bodies can create a self-call (infinite recursion). The stage helpers `setPh`, `setBuf`, `setPly` call React's setters `setPhase`, `setBuffering`, `setPlaying`.
+
+## Queue, auto-advance and resync
+- Mixed queue: YouTube and Google Drive items can be queued and played in any order. The room picks the stage from the current item's `kind` (StageYouTube or StageGoogleDrive). Facebook is not supported.
+- Auto-advance: when a video ends and something is queued, the server (`startUpNext`) starts a 5 s countdown (`UP_NEXT_MS`, env override for tests) and announces it with `up-next`. Cancel (`up-next:cancel`, person in control only) or any manual pick (`video:change`) or removing the next item clears it. A second end report during the countdown is ignored. With nothing queued the room simply stops, as before.
+- Resync: the sync indicator is a button. Clicking it, and every successful join (including returning to the app), bumps a shared `resync` counter. Each stage then jumps to the live position (`time + elapsed * rate` while playing) and matches play/pause and speed.
+- Typing in the queue: while a sheet is open the room no longer reacts to the keyboard (no layout change under the typing box), and QueuePanel is memoized so chat and playback updates do not re-render it.
+- Chat toasts (landscape and fullscreen): they are passed to the stage as `overlay` and rendered inside the stage's own element, so they stay visible when the stage goes fullscreen. Covered: YouTube, Google Drive (both players), local file.
+- YouTube fullscreen: when the YouTube iframe itself goes fullscreen, `useCinema` asks the room's container to take the fullscreen over, so the chat toasts stay visible. If the browser refuses, the video keeps playing and the toasts stay hidden.
+
