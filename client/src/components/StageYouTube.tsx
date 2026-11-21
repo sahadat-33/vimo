@@ -17,7 +17,7 @@ const OWNER = 'The owner doesn’t allow this video to be played outside YouTube
 const YT_ERR: Record<number, string> = { 2: 'That YouTube link isn’t valid.', 5: 'Your browser couldn’t play this video. Reload the page and try again.',
   100: 'This video was removed or is private.', 101: OWNER, 150: OWNER, 153: 'YouTube refused to load the player here. Reload the page and try again.' };
 
-export default function StageYouTube({ socket, playback, current, emitPlayback, onDrift, interacted, resync }: StageProps) {
+export default function StageYouTube({ overlay, socket, playback, current, emitPlayback, onDrift, interacted, resync }: StageProps) {
   const host = useRef<HTMLDivElement>(null), player = useRef<any>(null), ready = useRef(false);
   const until = useRef(0);                       // isRemoteUpdate mutex: local player events are ignored until this time
   const lastTick = useRef({ t: 0, at: 0 });
@@ -121,5 +121,6 @@ export default function StageYouTube({ socket, playback, current, emitPlayback, 
       <p role="alert" className="text-sm">{err}</p>
       {loadFail && <button onClick={() => { document.getElementById('yt-api')?.remove(); setAttempt((n) => n + 1); }} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white">Retry</button>}
       {current && !loadFail && <button onClick={() => socket.emit('video:ended', current.id)} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white"><SkipForward size={16} /> Skip this video</button>}</div></div>}
+  {overlay}
   </div>;
 }

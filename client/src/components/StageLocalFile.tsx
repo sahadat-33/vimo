@@ -10,7 +10,7 @@ const fmt = (n: number) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(2)} GB
 const Bar = ({ pct }: { pct: number }) => <div className="h-2 w-64 max-w-full overflow-hidden rounded-full bg-surface2"><div className="h-full bg-primary transition-[width]" style={{ width: `${pct}%` }} /></div>;
 
 /** One person uploads the video to shared storage; every participant's player loads the same file and stays in sync through the room playback state. */
-export default function StageLocalFile({ socket, playback, emitPlayback, onDrift, interacted, file, isHost, canControl }: StageProps) {
+export default function StageLocalFile({ overlay, socket, playback, emitPlayback, onDrift, interacted, file, isHost, canControl }: StageProps) {
   const vid = useRef<HTMLVideoElement>(null), xhr = useRef<XMLHttpRequest | null>(null), lastFile = useRef<File | null>(null);
   const lastPlayCmd = useRef(0), until = useRef(0), aborted = useRef(false), retried = useRef(false), forcedMute = useRef(false);
   const pbRef = useRef(playback); pbRef.current = playback;
@@ -134,5 +134,6 @@ export default function StageLocalFile({ socket, playback, emitPlayback, onDrift
     {src && !up && isHost && <label className="absolute left-2 top-2 z-20 flex cursor-pointer items-center gap-1 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs opacity-70 transition hover:opacity-100"><Upload size={14} /> Change video
       <input type="file" accept="video/*" className="sr-only" onChange={pick} /></label>}
     {src && msg && !up && <p role="alert" className="absolute inset-x-2 bottom-12 z-20 rounded-lg bg-black/80 p-2 text-center text-xs text-accent">{msg}</p>}
+  {overlay}
   </div>;
 }

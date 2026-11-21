@@ -22,7 +22,7 @@ type Failure = { message: string; permanent: boolean } | null;
  * Several attempts for slow or temporary failures ("Trying to load (n/3)"). A permanent problem (private file, format, key) stops at once.
  * Google's own player is used only when the room chooses it, and then for everyone: the choice is shared through the server.
  */
-export default function StageGoogleDrive({ socket, playback, current, emitPlayback, onDrift, onManual, interacted, canControl, driveMode, setDriveMode, resync }: StageProps) {
+export default function StageGoogleDrive({ overlay, socket, playback, current, emitPlayback, onDrift, onManual, interacted, canControl, driveMode, setDriveMode, resync }: StageProps) {
   const id = current?.id ?? '';
   const roomManual = !!driveMode && driveMode.id === id && driveMode.mode === 'manual';
   const sources = useMemo(() => driveSources(id, DRIVE_KEY), [id]);
@@ -251,6 +251,7 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
   if (roomManual) return <div className="relative h-full w-full bg-black">
     <iframe key={`embed-${id}`} title="Google Drive video" src={drivePreviewUrl(id)} className="h-full w-full border-0" allow="autoplay; fullscreen; encrypted-media" allowFullScreen />
     <ManualSync socket={socket} canControl={canControl} onBack={() => requestMode('auto')} />
+    {overlay}
     {note && <span role="alert" className="pointer-events-none absolute bottom-3 left-1/2 z-[12] -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-xs text-accent">{note}</span>}
   </div>;
 
@@ -285,5 +286,6 @@ export default function StageGoogleDrive({ socket, playback, current, emitPlayba
         </div>
         {note && <p role="alert" className="text-xs text-accent">{note}</p>}
       </div></div>}
+  {overlay}
   </div>;
 }
