@@ -22,7 +22,7 @@ export default function DriveControls({ visible, playing, time, duration, muted,
   }, [open]);
   const shown = drag ?? time, max = duration > 0 ? duration : 0;
   const commit = () => { if (drag !== null) { onSeek(drag); setDrag(null); } };
-  const btn = 'grid h-10 w-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15 active:scale-95 disabled:opacity-40 sm:h-11 sm:w-11';
+  const btn = 'press grid h-10 w-10 shrink-0 place-items-center rounded-full text-white hover:bg-white/15 active:scale-95 disabled:opacity-40 sm:h-11 sm:w-11';
   return <div data-ui className={cx('absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-1.5 pt-12 transition-opacity duration-300', visible ? 'opacity-100' : 'pointer-events-none opacity-0')}>
     <div className="flex items-center gap-2.5 text-xs tabular-nums text-white/90">
       <span className="w-11 shrink-0 text-right">{formatTime(shown)}</span>
@@ -39,7 +39,7 @@ export default function DriveControls({ visible, playing, time, duration, muted,
       <span className="flex-1" />
       <div ref={gear} className="relative">
         <button className={btn} aria-label="Settings" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}><Settings size={20} /></button>
-        {open && <div role="dialog" aria-label="Playback settings" className="absolute bottom-full right-0 mb-2 w-56 rounded-2xl border border-white/10 bg-surface2/95 p-3 text-sm text-ink shadow-card">
+        {open && <div role="dialog" aria-label="Playback settings" className="absolute bottom-full right-0 mb-2 w-56 rounded-2xl border border-white/[.08] bg-[#171717]/95 p-3 text-sm text-ink shadow-[0_18px_40px_-16px_rgba(0,0,0,.95)] backdrop-blur-md animate-[riseIn_.22s_ease-out]">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Speed</p>
           <div className="grid grid-cols-3 gap-1.5">
             {SPEEDS.map((s) => <button key={s} disabled={!canControl} aria-pressed={s === speed} onClick={() => { onSpeed(s); setOpen(false); }}
