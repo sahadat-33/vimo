@@ -17,3 +17,11 @@ body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-are
 @keyframes toastLife { 0% { opacity: 0; transform: translateX(28px) } 9% { opacity: 1; transform: none } 82% { opacity: 1; transform: none } 100% { opacity: 0; transform: none } }
 @media (prefers-reduced-motion: reduce) { [aria-label="New messages"] > div { animation: none !important } }
 @keyframes driveFlash { 0% { opacity: 0; transform: scale(.85) } 25% { opacity: 1; transform: scale(1) } 100% { opacity: 0 } }
+
+/* Room polish (visual only): charcoal surfaces, press feedback, a soft entrance and a breathing sync dot. */
+.surface-charcoal { background: linear-gradient(180deg, rgba(23,23,23,.94), rgba(18,18,18,.94)); }
+.press { transition: transform .18s cubic-bezier(.2,.8,.2,1), background-color .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.press:active { transform: scale(.94); }
+@keyframes riseIn { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@keyframes breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,.5) } 60% { box-shadow: 0 0 0 6px rgba(52,211,153,0) } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01s !important; animation-iteration-count: 1 !important; transition-duration: .01s !important } }
