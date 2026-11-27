@@ -73,7 +73,7 @@ Brand palette from the Vimo kit: `#6A5B9A` (brand), `#A76DCA` (secondary), `#8A3
 - Render free tier sleeps after inactivity (about 30 to 60 s cold start). Open the site a minute before use.
 - Daily free tier: 10,000 participant-minutes per month, shared by everyone. Hyperbeam is similar.
 - iOS/Android block programmatic play with sound until a tap, so a "Tap to sync & unmute" overlay appears.
-- Hyperbeam calls to verify against current docs: `control_disable_default` (VM option), `updateControlDisabled`, `sendEvent` (mobile typing helper), `adminToken` option. Daily: verify `startAudioOff/startVideoOff` join without a prompt and that `setLocalAudio/Video(true)` requests the device.
+- Hyperbeam (checked against docs.hyperbeam.com): session options `control_disable_default` and `profile` are as documented; `sendEvent` (typing box) and `DELETE /v0/vm/{session_id}` (stop) are as documented; `setPermissions` is deprecated and replaced by `addRoles` / `removeRoles`. Daily: verify `startAudioOff/startVideoOff` join without a prompt and that `setLocalAudio/Video(true)` requests the device.
 - The Daily `getCallInstance()` guard avoids duplicate call objects; React strict mode is off.
 - Never commit API keys. Set them only in Render and Vercel dashboards.
 
@@ -131,4 +131,40 @@ Make small targeted edits. Keep env var names, the 10-person cap, `/health`, and
 - The countdown card has a progress bar that drains with the timer (`UpNextOverlay`).
 - `prefers-reduced-motion` shortens all animations and transitions to near-instant.
 - Only class names, CSS and the countdown progress bar changed. No props, handlers, socket events or layout conditions changed.
+
+## Dashboard and party setup (visual only)
+- Dashboard: editorial hero, tiles with a glowing art panel (`ModeCard`), charcoal surfaces. Top bar keeps icon-only navigation with history on phones and tablets; the desktop sidebar keeps labels.
+- Party setup: same form and handlers, restyled with charcoal surfaces and larger type.
+- Logic unchanged: routes, `start`, `join`, health polling, passcode lock, history view.
+
+## Landscape video and speed nudges (fix)
+- No backdrop blur over the picture: on phones, a blurred layer above a playing video can blank the picture until the screen re-lays out. Overlays that sit on the video (header pills, controls, countdown, settings) use solid charcoal instead.
+- Speed nudges keep the echo-suppression window short (400 ms), so a real play or pause right after a nudge is still shared.
+
+## Microphone and camera (temporarily disabled)
+- The microphone and camera buttons in `RoomControls.tsx` are disabled for now. Their handlers and the call code are kept, so they can be re-enabled by removing the `disabled` attribute.
+
+## YouTube fullscreen on Samsung Internet (fix)
+- The YouTube iframe is no longer handed to the room container. A handoff left Samsung Internet showing a black picture with dead controls until Back was pressed. YouTube's own fullscreen is used again. Chat toasts are not drawn over YouTube's own fullscreen (they still appear in landscape without fullscreen).
+
+## Remember me, share from other apps, YouTube fullscreen
+- Remember me: ticking it on the passcode page keeps the passcode in this device's local storage for 7 days (`lib/types.ts`, key `vimoPass`, with an expiry). It is stored as plain text on that device; a signed session token would be the safer next step. Lock this device clears it.
+- Sharing: the manifest has a `share_target` at `/share`. A YouTube or Google Drive link shared from another app opens `app/share`. Without the passcode the link is kept (`vimoPendingShare`), the passcode gate runs, and the share page continues. With the passcode a room opens straight away with that video (host, "Only I have control" on). Chrome on Android supports installed web apps as share targets; Samsung Internet may not.
+- YouTube fullscreen: the YouTube player's own fullscreen button is off (`fs: 0`), so the room's full-screen view is used and the chat bubbles stay visible. Drive's fullscreen keeps them too, because they sit inside the player.
+- Haptic feedback: when a message from someone else arrives while the room is in landscape or fullscreen, the phone buzzes once (`navigator.vibrate` in `ChatToasts.tsx`). Portrait never buzzes. Phones without vibration support (iPhone) show nothing.
+- YouTube keeps its own fullscreen button (no `fs: 0`). Chat bubbles are not drawn over YouTube's native fullscreen.
+
+## Chat panel and landscape toasts (visual only)
+- Chat messages: charcoal bubbles (own messages in a soft purple gradient), a gentle entrance for new messages, and press feedback on the reaction and send buttons. Reactions and the input are unchanged.
+- Landscape toasts: solid charcoal cards with no blur (blur over a playing video can blank it on phones). Their positioning, timing and vibration are unchanged.
+- There is no reply feature in the project yet.
+
+## Shared browser (Hyperbeam)
+- Session created on the server with `control_disable_default: true` (nobody can control by default) and a saved profile. The admin token goes only to the current controller's socket, never into room state.
+- The controller's browser grants itself control with `addRoles([userId], ['control'], true)`. `exclusive: true` removes control from every other connection, so the server's one-controller rule is enforced by Hyperbeam too.
+- Connection timeout is 10 s (the SDK default of 2 s is too short on mobile data).
+- Server rules: only the host starts or stops the browser (stop also works for the controller); control can be taken when free or by the host; the controller can pass or release.
+- Each tab is a separate Hyperbeam user, so control follows the exact connection that holds the admin token.
+- Not tested against live Hyperbeam: the server rules are tested with a fake Hyperbeam (`hb_test.js`).
+- Session profile: the `profile` option takes the session ID of a saved profile. It is sent only when `HYPERBEAM_PROFILE` holds such an ID (with `load` and `save` set to it). A made-up profile name is refused by Hyperbeam with HTTP 400, which is what stopped sessions from starting. Without a real ID the browser starts without a saved profile, so logins are not kept between sessions.
 
