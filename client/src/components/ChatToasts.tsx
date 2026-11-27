@@ -14,6 +14,7 @@ export default function ChatToasts({ socket, selfId, active }: { socket: AppSock
   useEffect(() => {
     const onMsg = (m: ChatMessage) => {
       if (m.system || m.from === selfId) return;
+      if (on.current) navigator.vibrate?.([90, 70, 90]); // a short buzz so the viewer feels a message arrive (landscape and fullscreen only, never portrait)
       if (!on.current && !document.fullscreenElement) return; // only while the video is immersive or fullscreen
       setToasts((t) => [...t.slice(-2), m]); // at most 3 on screen
       setTimeout(() => setToasts((t) => t.filter((x) => x.id !== m.id)), 2800);
