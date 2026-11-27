@@ -20,12 +20,12 @@ export default function RoomControls(p: RoomControlsProps) {
   const round = '!rounded-full';
   return <div className="relative" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
     {open && <button aria-label="Close settings" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />}
-    {open && <div role="dialog" aria-label="Room settings" className="absolute bottom-full right-0 z-50 mb-2 w-72 space-y-3 rounded-2xl border border-white/[.08] bg-[#171717]/95 p-4 text-sm shadow-[0_18px_40px_-16px_rgba(0,0,0,.95)] backdrop-blur-md animate-[riseIn_.22s_ease-out]">
+    {open && <div role="dialog" aria-label="Room settings" className="absolute bottom-full right-0 z-50 mb-2 w-72 space-y-3 rounded-2xl border border-white/[.08] bg-[#171717]/95 p-4 text-sm shadow-[0_18px_40px_-16px_rgba(0,0,0,.95)] animate-[riseIn_.22s_ease-out]">
       <div className="flex items-center justify-between gap-3"><span>Smart Mic<span className="block text-xs text-muted">Mutes your mic while the video plays</span></span><Switch on={p.smartMic} label="Smart Mic" onClick={() => p.setSmartMic(!p.smartMic)} /></div>
       {p.isHost && p.onHostOnly && <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-3"><span>Only I have control<span className="block text-xs text-muted">Friends can’t pause, seek or change the video</span></span>
         <Switch on={!!p.hostOnly} label="Only I have control" onClick={() => p.onHostOnly!(!p.hostOnly)} /></div>}
       <p className="flex items-center justify-between border-t border-white/10 pt-3 text-muted"><span>Call quality</span><span className="text-ink">{p.netText}</span></p></div>}
-    <div className={cx('flex items-center justify-between gap-2 rounded-2xl border border-white/[.06] p-2 shadow-[0_14px_34px_-18px_rgba(0,0,0,.9)] backdrop-blur-md animate-[riseIn_.45s_ease-out]', p.compact ? 'bg-black/60' : 'bg-[#171717]/90')}>
+    <div className={cx('flex items-center justify-between gap-2 rounded-2xl border border-white/[.06] p-2 shadow-[0_14px_34px_-18px_rgba(0,0,0,.9)] animate-[riseIn_.45s_ease-out]', p.compact ? 'bg-black/75' : 'bg-[#171717]/95')}>
       <div className="flex items-center gap-2">
         <IconButton className={round} label={p.mic ? 'Turn microphone off' : 'Turn microphone on'} active={p.mic} disabled={!p.callReady} onClick={p.onMic}>{p.mic ? <Mic size={20} /> : <MicOff size={20} />}</IconButton>
         <IconButton className={round} label={p.cam ? 'Turn camera off' : 'Turn camera on'} active={p.cam} disabled={!p.callReady} onClick={p.onCam}>{p.cam ? <Video size={20} /> : <VideoOff size={20} />}</IconButton>

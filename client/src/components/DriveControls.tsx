@@ -39,7 +39,7 @@ export default function DriveControls({ visible, playing, time, duration, muted,
       <span className="flex-1" />
       <div ref={gear} className="relative">
         <button className={btn} aria-label="Settings" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}><Settings size={20} /></button>
-        {open && <div role="dialog" aria-label="Playback settings" className="absolute bottom-full right-0 mb-2 w-56 rounded-2xl border border-white/[.08] bg-[#171717]/95 p-3 text-sm text-ink shadow-[0_18px_40px_-16px_rgba(0,0,0,.95)] backdrop-blur-md animate-[riseIn_.22s_ease-out]">
+        {open && <div role="dialog" aria-label="Playback settings" className="absolute bottom-full right-0 mb-2 w-56 rounded-2xl border border-white/[.08] bg-[#171717]/98 p-3 text-sm text-ink shadow-[0_18px_40px_-16px_rgba(0,0,0,.95)] animate-[riseIn_.22s_ease-out]">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Speed</p>
           <div className="grid grid-cols-3 gap-1.5">
             {SPEEDS.map((s) => <button key={s} disabled={!canControl} aria-pressed={s === speed} onClick={() => { onSpeed(s); setOpen(false); }}

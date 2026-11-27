@@ -137,7 +137,7 @@ export default function StageGoogleDrive({ overlay, socket, playback, current, e
       if (pbRef.current.playing && v.paused && inter.current && Date.now() - lastPlayCmd.current > 4000) { apply(); return; } // a refused play: retry
       const a = driftAction(diff, pbRef.current.playing && !v.paused, false);
       if (a === 'seek') act(() => { v.currentTime = exp; });
-      else { const want = nudgedRate(pbRef.current.rate, a); if (Math.abs(v.playbackRate - want) > 1e-6) act(() => { v.playbackRate = want; }); }
+      else { const want = nudgedRate(pbRef.current.rate, a); if (Math.abs(v.playbackRate - want) > 1e-6) act(() => { v.playbackRate = want; }, 400); }
     }, 1000);
     return () => clearInterval(t);
   }, [ready]); // eslint-disable-line
