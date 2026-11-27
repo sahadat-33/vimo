@@ -20,7 +20,6 @@ export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boole
   const landscapeRef = useRef(landscape); landscapeRef.current = landscape;
   const locked = useRef(false); // we locked the screen to landscape for this fullscreen session
   const tried = useRef(false);  // ...and we only ask once per session
-  const swapped = useRef(false); // we asked the room's container to take over the fullscreen (once per session)
 
   useEffect(() => {
     if (!enabled) { setFs(false); return; }
@@ -33,12 +32,6 @@ export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boole
       // Older WebKit has no fullscreen element, only a flag.
       const on = inside || (!!doc.webkitIsFullScreen && !!wrap?.querySelector('video, iframe'));
       setFs(on);
-      // A player's own fullscreen (YouTube's iframe) shows only the iframe, so the chat toasts beside it would be hidden. Hand the
-      // fullscreen to the room's container instead, which holds the player and the toasts. If the browser refuses, the video keeps playing as before.
-      if (on && wrap && el && el !== wrap && wrap.contains(el) && (el.tagName === 'IFRAME' || el.tagName === 'VIDEO') && !swapped.current) {
-        swapped.current = true;
-        try { void wrap.requestFullscreen({ navigationUI: 'hide' } as FullscreenOptions).catch(() => { swapped.current = false; }); } catch { swapped.current = false; }
-      }
       if (on && !landscapeRef.current && !tried.current) {
         // Tapped the player's fullscreen icon while upright: turn landscape, as the YouTube app does. Refusals are fine.
         tried.current = true;
@@ -47,7 +40,7 @@ export function useCinema(wrapRef: RefObject<HTMLElement | null>, enabled: boole
       if (!on) {
         // Fullscreen is over (for whatever reason): hand rotation back to the phone.
         if (locked.current) { try { orientation()?.unlock?.(); } catch {} }
-        locked.current = false; tried.current = false; swapped.current = false;
+        locked.current = false; tried.current = false;
       }
     };
     let timers: ReturnType<typeof setTimeout>[] = [];
