@@ -35,24 +35,25 @@ export default function NewParty() {
       router.push(`/room/${roomId}`);
     } catch (x) { setErr(x instanceof Error ? x.message : 'Could not start the party.'); setBusy(false); }
   }
-  const field = 'min-h-[48px] w-full rounded-xl border border-white/10 bg-surface2 px-4 text-ink placeholder:text-muted/60 focus:border-secondary';
-  return <main className="bg-cinema min-h-[100dvh] px-4 py-8"><div className="mx-auto w-full max-w-4xl space-y-6">
-    <div className="flex items-center justify-between"><Logo size={32} /><button onClick={() => router.push('/')} className="flex items-center gap-1.5 text-sm text-muted hover:text-ink"><ArrowLeft size={16} /> Back</button></div>
-    <div><h1 className="text-3xl font-bold tracking-tight">{mode === 'youtube' ? 'Start an online party' : 'Start a video file party'}</h1>
-      <p className="mt-1 text-muted">You’ll get a link to share. Friends join with just a name and a picture.</p></div>
+  const field = 'min-h-[52px] w-full rounded-2xl border border-white/[.08] bg-[#171717] px-4 text-ink placeholder:text-muted/60 transition focus:border-secondary focus:outline-none focus:ring-2 focus:ring-secondary/20';
+  return <main className="min-h-[100dvh] bg-[#121212] px-4 py-8 md:py-12" style={{ backgroundImage: 'radial-gradient(800px 420px at 15% -10%, rgba(138,63,187,.14), transparent 60%)' }}><div className="mx-auto w-full max-w-4xl space-y-8">
+    <div className="flex items-center justify-between animate-[riseIn_.5s_ease-out]"><Logo size={32} /><button onClick={() => router.push('/')} className="press flex items-center gap-1.5 rounded-full border border-white/[.08] bg-white/[.03] px-3 py-1.5 text-sm text-muted hover:text-ink"><ArrowLeft size={16} /> Back</button></div>
+    <div className="animate-[riseIn_.6s_ease-out] space-y-2"><p className="text-xs font-semibold uppercase tracking-[.2em] text-secondary">{mode === 'youtube' ? 'Online party' : 'Video file party'}</p>
+      <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">{mode === 'youtube' ? 'Start an online party' : 'Start a video file party'}</h1>
+      <p className="max-w-xl text-muted">You’ll get a link to share. Friends join with just a name and a picture.</p></div>
     <ProfileEditor draft={draft}>
-      <Card className="space-y-4 p-5"><form onSubmit={start} className="space-y-4">
-        <div className="flex items-center gap-3 border-b border-white/10 pb-4"><Avatar avatar={draft.avatar} color={draft.color} /><span className="truncate text-lg font-semibold">{draft.name.trim() || draft.defaultName}</span></div>
+      <Card className="space-y-5 rounded-[22px] border-white/[.07] bg-[#171717] p-6 shadow-[0_24px_60px_-30px_rgba(0,0,0,.9)]"><form onSubmit={start} className="space-y-5">
+        <div className="flex items-center gap-3 border-b border-white/[.06] pb-4"><Avatar avatar={draft.avatar} color={draft.color} /><span className="truncate text-lg font-semibold">{draft.name.trim() || draft.defaultName}</span></div>
         <h2 className="text-lg font-semibold">Create a party</h2>
         {mode === 'youtube'
           ? <input aria-label="Video link" className={field} value={link} onChange={(e) => setLink(e.target.value)} placeholder="Paste a video link" inputMode="url" autoCapitalize="off" autoCorrect="off" />
           : <><input ref={picker} type="file" accept="video/*" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-              <button type="button" onClick={() => picker.current?.click()} className={cx(field, 'flex items-center gap-3 text-left')}><FileVideo size={20} className="shrink-0 text-secondary" />
+              <button type="button" onClick={() => picker.current?.click()} className={cx(field, 'press flex items-center gap-3 text-left hover:border-secondary/40')}><FileVideo size={20} className="shrink-0 text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{file ? file.name : 'Choose a video from this device'}</span>{file && <span className="shrink-0 text-xs text-muted">{fmt(file.size)}</span>}</button></>}
         <div className="flex items-center justify-between gap-3"><span id="ho" className="text-muted">Only I have control</span>
-          <button type="button" role="switch" aria-checked={hostOnly} aria-labelledby="ho" onClick={() => setHostOnly(!hostOnly)} className={cx('relative h-7 w-12 shrink-0 rounded-full transition', hostOnly ? 'bg-primary' : 'bg-surface2')}>
-            <span className={cx('absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all', hostOnly ? 'left-[22px]' : 'left-0.5')} /></button></div>
+          <button type="button" role="switch" aria-checked={hostOnly} aria-labelledby="ho" onClick={() => setHostOnly(!hostOnly)} className={cx('relative h-7 w-12 shrink-0 rounded-full transition-colors duration-300', hostOnly ? 'bg-primary' : 'bg-white/10')}>
+            <span className={cx('absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all duration-300', hostOnly ? 'left-[22px]' : 'left-0.5')} /></button></div>
         {err && <p role="alert" className="text-sm text-accent">{err}</p>}
-        <Button loading={busy} className="bg-gradient-to-r from-primary to-secondary">{busy ? 'Starting…' : 'Start the party'}</Button></form></Card>
+        <Button loading={busy} className="bg-gradient-to-r from-primary to-secondary shadow-glow">{busy ? 'Starting…' : 'Start the party'}</Button></form></Card>
     </ProfileEditor></div></main>;
 }
