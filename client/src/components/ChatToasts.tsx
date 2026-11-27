@@ -24,7 +24,7 @@ export default function ChatToasts({ socket, selfId, active }: { socket: AppSock
   useEffect(() => { if (!active && !document.fullscreenElement) setToasts([]); }, [active]);
   return <div aria-live="polite" aria-label="New messages"
     className="pointer-events-none absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-[999999] flex w-[min(60%,22rem)] flex-col items-end gap-2">
-    {toasts.map((m) => <div key={m.id} className="flex max-w-full animate-[toastLife_2.8s_ease-in-out_forwards] items-start gap-2 rounded-2xl bg-black/70 px-3 py-2 text-sm text-white shadow-card">
+    {toasts.map((m) => <div key={m.id} className="flex max-w-full animate-[toastLife_2.8s_ease-in-out_forwards] items-start gap-2 rounded-2xl border border-white/[.08] bg-[#121212]/92 px-3 py-2 text-sm text-white shadow-[0_14px_30px_-16px_rgba(0,0,0,.95)]">
       <span style={{ background: m.color }} className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-base leading-none">{m.avatar}</span>
       <span className="min-w-0"><span className="block text-xs font-semibold text-secondary">{m.name}</span><span className="break-words">{m.text}</span></span></div>)}
   </div>;
