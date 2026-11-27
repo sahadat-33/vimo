@@ -76,9 +76,23 @@ export interface StageProps {
 }
 export const SERVER = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000';
 let memPass = '', memCid = ''; // fallback when a browser blocks sessionStorage
-export const setPass = (p: string) => { memPass = p; try { sessionStorage.setItem('passcode', p); } catch {} };
-export const clearPass = () => { memPass = ''; try { sessionStorage.removeItem('passcode'); } catch {} };
-export const getPass = () => { if (typeof window === 'undefined') return ''; try { return sessionStorage.getItem('passcode') || memPass; } catch { return memPass; } };
+const REMEMBER_KEY = 'vimoPass', REMEMBER_MS = 7 * 24 * 3600 * 1000; // "Remember me": 7 days on this device
+export const setPass = (p: string, remember = false) => {
+  memPass = p; try { sessionStorage.setItem('passcode', p); } catch {}
+  if (remember) try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ p, exp: Date.now() + REMEMBER_MS })); } catch {}
+};
+export const clearPass = () => { memPass = ''; try { sessionStorage.removeItem('passcode'); localStorage.removeItem(REMEMBER_KEY); } catch {} };
+export const getPass = () => {
+  if (typeof window === 'undefined') return '';
+  try { const s = sessionStorage.getItem('passcode'); if (s) return s; } catch {}
+  if (memPass) return memPass;
+  try { // remembered on this device and not expired
+    const r = JSON.parse(localStorage.getItem(REMEMBER_KEY) || 'null');
+    if (r && typeof r.p === 'string' && r.exp > Date.now()) { memPass = r.p; try { sessionStorage.setItem('passcode', r.p); } catch {} return r.p; }
+    localStorage.removeItem(REMEMBER_KEY);
+  } catch {}
+  return '';
+};
 export function getCid(): string { // stable per browser: every tab of one browser is the same participant, and reopening an invitation resumes the same seat
   if (typeof window === 'undefined') return '';
   const valid = (value: string | null): value is string => !!value && /^[A-Za-z0-9_-]{8,64}$/.test(value);
