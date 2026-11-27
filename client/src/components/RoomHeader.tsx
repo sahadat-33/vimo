@@ -17,11 +17,11 @@ export default function RoomHeader({ members, selfId, onPeople, sync, showSync, 
   const shown = [...members].sort((a, b) => (a.id === selfId ? -1 : b.id === selfId ? 1 : 0)).slice(0, Math.min(3, members.length)), s = SYNC[sync]; // 1 person: 1 avatar, 2: 2, 3 or more: 3
   return <header className="flex items-center justify-between gap-2 px-3 py-2.5 animate-[riseIn_.5s_ease-out]">
     <button onClick={onPeople} aria-haspopup="dialog" aria-label={`Show people, ${members.length} in the room`}
-      className="press flex items-center gap-2 rounded-full border border-white/[.06] bg-[#171717]/85 py-1.5 pl-1.5 pr-4 backdrop-blur-md hover:bg-[#1f1f1f] active:scale-95">
+      className="press flex items-center gap-2 rounded-full border border-white/[.06] bg-[#171717]/95 py-1.5 pl-1.5 pr-4 hover:bg-[#1f1f1f] active:scale-95">
       <span className="flex -space-x-3">{shown.map((m) => <span key={m.id} className="rounded-full ring-2 ring-surface2"><Avatar avatar={m.avatar} color={m.color} size={36} /></span>)}</span>
       <span className="text-xl font-medium tabular-nums">{members.length}</span></button>
     <div className="flex items-center gap-2">
-      {showSync && <button onClick={onResync} title={`${s.tip}. Tap to resync`} aria-label={`${s.t}. Tap to resync`} className="press flex items-center gap-2 whitespace-nowrap rounded-full border border-white/[.06] bg-[#171717]/85 px-3.5 py-2 text-sm backdrop-blur-md hover:bg-[#1f1f1f] active:scale-95"><span className={cx('h-2.5 w-2.5 rounded-full', s.dot)} aria-hidden />{s.t}</button>}
+      {showSync && <button onClick={onResync} title={`${s.tip}. Tap to resync`} aria-label={`${s.t}. Tap to resync`} className="press flex items-center gap-2 whitespace-nowrap rounded-full border border-white/[.06] bg-[#171717]/95 px-3.5 py-2 text-sm hover:bg-[#1f1f1f] active:scale-95"><span className={cx('h-2.5 w-2.5 rounded-full', s.dot)} aria-hidden />{s.t}</button>}
       <button onClick={onLeave} aria-label="Leave room" title="Leave room" className="press grid h-11 w-11 place-items-center rounded-2xl bg-accent/15 text-accent ring-1 ring-accent/30 hover:bg-accent/25 active:scale-95"><LogOut size={20} /></button></div>
   </header>;
 }
