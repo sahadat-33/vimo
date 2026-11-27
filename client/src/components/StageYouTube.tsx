@@ -59,7 +59,7 @@ export default function StageYouTube({ overlay, socket, playback, current, emitP
       try {
       const el = document.createElement('div'); host.current.innerHTML = ''; host.current.appendChild(el);
       player.current = new window.YT.Player(el, { width: '100%', height: '100%', videoId: curRef.current?.id,
-        playerVars: { playsinline: 1, rel: 0, modestbranding: 1, fs: 0, origin: window.location.origin }, // fs 0: no YouTube fullscreen, so the room's full-screen view (and its chat bubbles) is the one used
+        playerVars: { playsinline: 1, rel: 0, modestbranding: 1, origin: window.location.origin },
         events: {
           onReady: () => { ready.current = true; apply(); },
           onStateChange: (e: any) => {
