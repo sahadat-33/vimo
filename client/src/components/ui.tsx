@@ -51,11 +51,20 @@ export function StatusPill({ online, label, title, compact }: { online: boolean 
 }
 
 export function ModeCard({ icon, title, desc, tag, onClick }: { icon: React.ReactNode; title: string; desc: string; tag: string; onClick: () => void }) {
-  return <button onClick={onClick} className="group flex w-full min-w-0 flex-col gap-4 rounded-card border border-white/5 bg-gradient-to-b from-surface2 to-surface p-6 text-left shadow-card transition hover:-translate-y-0.5 hover:border-secondary/50 hover:shadow-glow">
-    <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/20 text-secondary">{icon}</span>
-    <span className="space-y-1"><span className="block text-lg font-semibold">{title}</span><span className="block text-sm leading-relaxed text-muted">{desc}</span></span>
-    <span className="mt-auto flex items-center justify-between text-sm"><span className="rounded-full bg-surface px-2.5 py-0.5 text-muted">{tag}</span>
-      <ArrowRight size={18} className="text-secondary transition group-hover:translate-x-1" aria-hidden /></span></button>;
+  return <button onClick={onClick} className="group relative flex w-full min-w-0 flex-col overflow-hidden rounded-[22px] border border-white/[.07] bg-[#171717] text-left shadow-card transition duration-300 hover:-translate-y-1 hover:border-secondary/40 hover:shadow-glow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary/60">
+    <span aria-hidden className="relative block h-36 overflow-hidden bg-gradient-to-br from-[#2a1b47] via-[#171717] to-[#0f0f0f]">
+      <span className="absolute -left-10 -top-10 h-44 w-44 rounded-full bg-primary/40 blur-3xl transition-transform duration-700 group-hover:translate-x-6 group-hover:scale-110" />
+      <span className="absolute -bottom-12 right-0 h-40 w-40 rounded-full bg-secondary/25 blur-3xl transition-transform duration-700 group-hover:-translate-x-4" />
+      <span className="absolute inset-0 grid place-items-center text-secondary/90 transition-transform duration-500 group-hover:scale-110 [&>svg]:h-12 [&>svg]:w-12">{icon}</span>
+    </span>
+    <span className="flex flex-1 flex-col gap-2 p-5">
+      <span className="text-lg font-semibold">{title}</span>
+      <span className="text-sm leading-relaxed text-muted">{desc}</span>
+      <span className="mt-auto flex items-center justify-between pt-4 text-sm">
+        <span className="rounded-full border border-white/10 bg-white/[.04] px-2.5 py-0.5 text-xs text-muted">{tag}</span>
+        <ArrowRight size={18} className="text-secondary transition-transform duration-300 group-hover:translate-x-1" /></span>
+    </span>
+  </button>;
 }
 
 export function IconButton({ label, active, danger, badge, className, children, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean; danger?: boolean; badge?: number }) {
