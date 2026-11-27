@@ -125,3 +125,10 @@ Make small targeted edits. Keep env var names, the 10-person cap, `/health`, and
 - Chat toasts (landscape and fullscreen): they are passed to the stage as `overlay` and rendered inside the stage's own element, so they stay visible when the stage goes fullscreen. Covered: YouTube, Google Drive (both players), local file.
 - YouTube fullscreen: when the YouTube iframe itself goes fullscreen, `useCinema` asks the room's container to take the fullscreen over, so the chat toasts stay visible. If the browser refuses, the video keeps playing and the toasts stay hidden.
 
+## UI polish (room screen, visual only)
+- Charcoal surfaces (#121212 to #171717) with a thin border and backdrop blur on the controls, sync pill, people capsule, queue rows and countdown card. Defined as `.surface-charcoal` and `.press` in `globals.css`.
+- Motion: entrance (`riseIn`) for the header, controls, queue rows and countdown; a breathing dot on the "In sync" pill (`breathe`); press feedback on buttons (`.press`).
+- The countdown card has a progress bar that drains with the timer (`UpNextOverlay`).
+- `prefers-reduced-motion` shortens all animations and transitions to near-instant.
+- Only class names, CSS and the countdown progress bar changed. No props, handlers, socket events or layout conditions changed.
+
