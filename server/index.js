@@ -439,7 +439,7 @@ io.on('connection', (sock) => {
     try {
       const res = await fetch('https://engine.hyperbeam.com/v0/vm', { method: 'POST', signal: AbortSignal.timeout(20000),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.HYPERBEAM_API_KEY}` },
-        body: JSON.stringify({ control_disable_default: true, profile: { save: true, load: process.env.HYPERBEAM_PROFILE || 'couple_default_profile' } }) });
+        body: JSON.stringify({ control_disable_default: true, ...(process.env.HYPERBEAM_PROFILE ? { profile: { load: process.env.HYPERBEAM_PROFILE, save: process.env.HYPERBEAM_PROFILE } } : {}) }) }); // profile only when HYPERBEAM_PROFILE is a real saved-profile session ID (a made-up name is refused with HTTP 400)
       if (!res.ok) throw Object.assign(new Error(`hyperbeam ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`), { status: res.status });
       const d = await res.json();
       if (!d.session_id || !d.embed_url || !d.admin_token) throw new Error('bad hyperbeam response');
