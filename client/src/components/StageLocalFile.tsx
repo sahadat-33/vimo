@@ -131,7 +131,7 @@ export default function StageLocalFile({ overlay, socket, playback, emitPlayback
       <p className="font-semibold text-ink">Uploading for everyone · {up.pct}%</p><Bar pct={up.pct} />
       <p className="text-xs text-muted">{fmt(up.loaded)} of {fmt(up.total)}. Keep this tab open until it finishes.</p>
       <button onClick={cancel} className="inline-flex items-center gap-1 rounded-full bg-surface2 px-3 py-1 text-xs font-semibold"><X size={12} /> Cancel</button></div>}
-    {src && !up && isHost && <label className="absolute left-2 top-2 z-20 flex cursor-pointer items-center gap-1 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs opacity-70 transition hover:opacity-100"><Upload size={14} /> Change video
+    {src && !up && isHost && <label className="absolute left-2 top-2 z-20 flex cursor-pointer items-center gap-1 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs opacity-70 transition hover:opacity-1000"><Upload size={14} /> Change video
       <input type="file" accept="video/*" className="sr-only" onChange={pick} /></label>}
     {src && msg && !up && <p role="alert" className="absolute inset-x-2 bottom-12 z-20 rounded-lg bg-black/80 p-2 text-center text-xs text-accent">{msg}</p>}
   {overlay}

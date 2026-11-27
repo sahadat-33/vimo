@@ -5,7 +5,7 @@ import Hyperbeam from '@hyperbeam/web';
 import type { HbInfo, Member, StageProps } from '@/lib/types';
 
 /** Control is decided by the server. Only the current controller's socket receives the Hyperbeam admin token. */
-export default function StageBrowser({ socket, selfId, members, initial: info, controller: ctl }: StageProps & { members: Member[]; initial: HbInfo | null; controller: string | null }) {
+export default function StageBrowser({ socket, selfId, members, initial: info, controller: ctl, isHost }: StageProps & { members: Member[]; initial: HbInfo | null; controller: string | null }) {
   const box = useRef<HTMLDivElement>(null);
   const hb = useRef<any>(null);
   const [admin, setAdmin] = useState<string | null>(null);
@@ -20,9 +20,10 @@ export default function StageBrowser({ socket, selfId, members, initial: info, c
     if (!info || !box.current) return;
     let dead = false;
     (async () => { try {
-      const h = await Hyperbeam(box.current!, info.embedUrl, myAdmin ? { adminToken: myAdmin } : {});
+      const h = await Hyperbeam(box.current!, info.embedUrl, { timeout: 10000, ...(myAdmin ? { adminToken: myAdmin } : {}) }); // 10 s: phones on mobile data are slower than the 2 s default
       if (dead) return h.destroy(); hb.current = h;
-      if (myAdmin) await h.setPermissions(h.userId, { priority: 1, idle_timeout: 0, control_disabled: false });
+      // exclusive: this connection gets control and every other connection loses it (the server allows one controller at a time)
+      if (myAdmin) await h.addRoles([h.userId], ['control'], true);
       setErr('');
     } catch { setErr('Could not open the virtual browser.'); } })();
     return () => { dead = true; hb.current?.destroy(); hb.current = null; };
@@ -43,7 +44,7 @@ export default function StageBrowser({ socket, selfId, members, initial: info, c
       <input value={txt} onChange={(e) => setTxt(e.target.value)} placeholder="Type or paste, then Send" className="w-44 rounded-full bg-black/70 px-3 py-1.5 text-sm" />
       <button className="rounded-full bg-primary px-3 text-sm font-semibold text-white">Send</button></form>}
     <div className="absolute bottom-2 right-2 z-20 flex flex-wrap justify-end gap-2">
-      {ctl === null && <button onClick={() => socket.emit('browser:control', { action: 'take' })} className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-sm font-semibold text-white"><Hand size={14} /> Take control</button>}
+      {(ctl === null || (isHost && !mine)) && <button onClick={() => socket.emit('browser:control', { action: 'take' })} className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-sm font-semibold text-white"><Hand size={14} /> Take control</button>}
       {mine && <button onClick={() => socket.emit('browser:control', { action: 'release' })} className="flex items-center gap-1 rounded-full bg-black/70 px-3 py-1.5 text-sm"><Hand size={14} /> Pass control</button>}
       {ctl !== null && !mine && <span className="rounded-full bg-black/70 px-3 py-1.5 text-sm">{holder ? holder.name : 'Someone'} is in control</span>}
       <button onClick={() => socket.emit('browser:stop')} className="flex items-center gap-1 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg"><Power size={14} /> Stop (save minutes)</button></div>
